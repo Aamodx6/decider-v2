@@ -340,6 +340,53 @@ def target_index(example: Example) -> int:
     return int(example.label)  # score: the label IS the zero-based level index
 
 
+def normalize_state(state: str) -> str:
+    """Normalization for exact-match state dedup and overlap checks.
+
+    Rule (fixed, deterministic): unicode NFKC, lowercase, and every whitespace
+    run collapsed to a single space with ends stripped. Nothing else — no
+    punctuation folding — so "exact-match on normalized state text" stays a
+    conservative, reproducible rule.
+    """
+    import unicodedata
+
+    return " ".join(unicodedata.normalize("NFKC", str(state)).lower().split())
+
+
+def state_overlap(cfg: Config) -> dict[str, int]:
+    """Exact-match overlap between train and test states (normalized).
+
+    Loads only the ``state`` columns of both parquet files and compares the
+    distinct normalized states. This is a superset of the model-visible
+    overlap (it ignores adapter filtering), so an overlap of 0 guarantees the
+    training set cannot leak into the held-out evaluation. The dev carve-out
+    lives inside train and cannot change this number.
+    """
+    train_states = {
+        normalize_state(s)
+        for s in pd.read_parquet(_resolve_parquet_path(cfg, "train"), columns=["state"])["state"]
+    }
+    test_states = {
+        normalize_state(s)
+        for s in pd.read_parquet(_resolve_parquet_path(cfg, "test"), columns=["state"])["state"]
+    }
+    overlap = train_states & test_states
+    report = {
+        "train_states": len(train_states),
+        "test_states": len(test_states),
+        "overlap": len(overlap),
+    }
+    print(
+        f"[adapters] state overlap train<->test (normalized exact match): "
+        f"train={report['train_states']} test={report['test_states']} overlap={report['overlap']}"
+    )
+    if overlap:
+        sample = sorted(overlap)[:3]
+        for s in sample:
+            print(f"[adapters]   overlapping state: {s[:120]!r}")
+    return report
+
+
 def type_counts(examples: list[Example]) -> dict[str, int]:
     c = Counter(e.question["type"] for e in examples)
     return {t: c.get(t, 0) for t in ("choice", "noul", "score")}

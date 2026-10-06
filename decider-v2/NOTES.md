@@ -34,6 +34,12 @@ default)
 - **bev-decision has no validation split** (dataset README) — the dev set is
   carved out of train as above; the `test` parquet is held out and never
   touched by training or by the dev carve-out.
+- **State normalization for dedup/overlap** (step 7): NFKC + lowercase +
+  whitespace collapse, nothing else (no punctuation folding) — conservative
+  and reproducible.
+- **Eval-leak policy** (step 7): `state_overlap()` reports train<->test
+  normalized exact-match overlap but never mutates the training set; removal
+  decisions are M1's (dataset audit), made explicitly.
 
 ## Environment
 
@@ -50,6 +56,18 @@ default)
 ## Results
 
 (only real numbers from real runs are recorded here)
+
+### Train<->test state overlap (step 7, normalized exact match)
+
+- train=116,653 distinct normalized states, test=23,352, **overlap=1**:
+  `'dumber than a 5th grader ...check my poll'` (an Upworthy headline). The
+  dataset README claims no raw state appears in both splits; this one differs
+  only up to normalization (case/whitespace), so it is a near-duplicate leak
+  of exactly one state (~2 questions). Recorded for the M1 dataset audit;
+  not removed from training data.
+- Equivalence gate on the real backbone (step 7 re-run): joint vs separate
+  max abs diff **8.20e-05** (T=143, K=4, fp32/sdpa, 20 layers + LoRA) —
+  within the 1e-4 hard gate.
 
 ### Real-data audit (step 6, `data/train.parquet`, 125,614 rows)
 
