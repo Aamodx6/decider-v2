@@ -37,7 +37,9 @@ data:
   train_split: train
   test_split: test # held out; never trained on
   train_small_size: 50000 # fast-iteration subset, stratified by type
-  dev_size: 2000 # carved out of train (the dataset has no validation split)
+  # rows (states) carved out of train; ~2 questions per row. Rows, not
+  # questions, so repeated states never straddle train/dev.
+  dev_size: 2000
   subset_seed: 0
   max_options: 12
   min_options: 2

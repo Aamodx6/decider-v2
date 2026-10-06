@@ -13,3 +13,6 @@ data_cache/
 
 # HF caches that may land in-tree
 hf_cache/
+
+# runtime logs
+uv_sync.log

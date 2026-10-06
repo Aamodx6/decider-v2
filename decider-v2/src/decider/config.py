@@ -71,7 +71,10 @@ class DataConfig:
     train_split: str = "train"
     test_split: str = "test"  # held out; never trained on
     train_small_size: int = 50_000  # questions in the fast-iteration subset
-    dev_size: int = 2_000  # questions carved out of train for eval-during-training
+    # dataset ROWS (states) carved out of train for eval-during-training; each
+    # row expands into ~2 questions, so the dev question count is ~2x this.
+    # Rows, not questions: repeated states must never straddle train/dev.
+    dev_size: int = 2_000
     subset_seed: int = 0
     max_options: int = 12  # questions with more options than this are skipped
     min_options: int = 2  # and with fewer than this as well
