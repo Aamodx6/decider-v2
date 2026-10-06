@@ -1,0 +1,69 @@
+# decider-v2 — Milestone M0 configuration.
+# Mirrors the dataclass defaults in src/decider/config.py; every value the
+# code needs is here, so there are no magic numbers in the modules.
+
+run_name: m0-small
+runs_dir: runs
+precision: fp32 # decide() precision: fp32 (exact, order-invariant) | bf16 (fast)
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20 # first 20 of 28 layers, as bev-decider-0.4B
+  lora_r: 8
+  lora_alpha: 16
+  lora_dropout: 0.0
+  lora_layers: [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+  lora_targets: [q_proj, k_proj, v_proj, o_proj]
+  head_dim: 512
+  head_heads: 8
+  head_layers: 2
+  # ---- v2 features: flags exist but are NOT implemented in M0 (default off) ----
+  use_ctx_cross_attn: false
+  use_null_option: false
+  use_rank_emb: false
+  # ---- M0 knobs ----
+  pooling: opt_end # read each option at its <opt_end> hidden state
+  apply_final_norm: true # [ASSUMPTION] keep Qwen3's final RMSNorm
+
+data:
+  dataset_name: avbiswas/bev-decision
+  dataset_config: default
+  dataset_revision: null # null = latest
+  local_data_dir: ../bev-decision # local clone preferred when present
+  max_state_tokens: 1024
+  max_option_tokens: 64
+  max_question_tokens: 256
+  train_split: train
+  test_split: test # held out; never trained on
+  train_small_size: 50000 # fast-iteration subset, stratified by type
+  dev_size: 2000 # carved out of train (the dataset has no validation split)
+  subset_seed: 0
+  max_options: 12
+  min_options: 2
+
+train:
+  lr_lora: 2.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_frac: 0.03
+  batch_size: 32 # micro-batch per forward/backward
+  grad_accum: 4 # effective batch = 128
+  steps: 12000
+  label_smoothing: 0.0
+  grad_clip: 1.0
+  bf16: true
+  seed: 0
+  eval_every: 1000
+  ckpt_every: 2000
+  grad_checkpointing: false # enable on small-VRAM GPUs (see NOTES.md)
+  log_every: 20
+  num_workers: 0
+  shuffle_options: true
+  emd_weight: 0.0 # v2 feature — must stay 0.0 in M0
+  smoke_size: 64 # --smoke: overfit this many examples
+  smoke_steps: 200 # ... for this many steps
+
+eval:
+  batch_size: 8
+  ece_bins: 10
+  limit: 0 # 0 = full split

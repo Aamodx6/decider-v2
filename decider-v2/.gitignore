@@ -1,0 +1,15 @@
+# uv / python
+.venv/
+
+# caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# experiment outputs
+runs/
+data_cache/
+
+# HF caches that may land in-tree
+hf_cache/
