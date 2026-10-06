@@ -46,6 +46,9 @@ class ModelConfig:
     # [ASSUMPTION] Qwen3Model always applies its final RMSNorm in forward; we keep that
     # behaviour by default and expose the flag so the ablation is a one-line change.
     apply_final_norm: bool = True
+    # Custom 4-D masks are passed through by transformers 5.18 for sdpa (verified by
+    # tests/test_equivalence.py); flip to "eager" only if a future version breaks it.
+    attn_implementation: str = "sdpa"
 
 
 @dataclass

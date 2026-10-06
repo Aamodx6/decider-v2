@@ -24,6 +24,7 @@ model:
   # ---- M0 knobs ----
   pooling: opt_end # read each option at its <opt_end> hidden state
   apply_final_norm: true # [ASSUMPTION] keep Qwen3's final RMSNorm
+  attn_implementation: sdpa # custom 4-D masks verified with sdpa in tests
 
 data:
   dataset_name: avbiswas/bev-decision

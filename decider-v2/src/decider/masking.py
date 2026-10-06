@@ -18,8 +18,12 @@ padding.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:  # avoids a runtime cycle; tokenizer never imports masking
+    from .tokenizer import EncodedQuestion
 
 NEG_INF = float("-inf")
 
@@ -110,6 +114,29 @@ def build_batched_mask_and_pos(
         end_indices=end_indices,
         option_mask=option_mask,
     )
+
+
+def pack_single(encoded: "EncodedQuestion", device="cpu") -> dict:
+    """Pack one :class:`~decider.tokenizer.EncodedQuestion` into model inputs.
+
+    Returns ``input_ids [1, T]``, ``attention_mask [1, 1, T, T]`` (float
+    additive), ``position_ids [1, T]`` and ``end_indices [K]`` (the
+    ``<opt_end>`` positions). This is the single source of truth used by the
+    model, the collate function and the equivalence tests.
+    """
+    P = encoded.prefix_len
+    option_lens = encoded.option_lens
+    mask, pos, ends = build_mask_and_pos(P, option_lens, device=device)
+    flat_options = [t for block in encoded.option_blocks for t in block]
+    input_ids = torch.tensor(encoded.prefix_ids + flat_options, dtype=torch.long, device=device)
+    return {
+        "input_ids": input_ids.unsqueeze(0),
+        "attention_mask": to_additive_mask(mask.unsqueeze(0)),
+        "position_ids": pos.unsqueeze(0),
+        "end_indices": ends,
+        "prefix_len": P,
+        "option_lens": list(option_lens),
+    }
 
 
 def to_additive_mask(attn_mask_bool: torch.Tensor) -> torch.Tensor:
