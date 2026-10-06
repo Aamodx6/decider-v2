@@ -40,6 +40,16 @@ default)
 - **Eval-leak policy** (step 7): `state_overlap()` reports train<->test
   normalized exact-match overlap but never mutates the training set; removal
   decisions are M1's (dataset audit), made explicitly.
+- **Over-long options: train drops, eval truncates** (step 7):
+  `load_test(truncate_options=True)` (default) keeps every held-out question
+  and truncates option text to `max_option_tokens` (the tokenizer appends
+  `<opt_end>` outside the cap, so the readout token always survives);
+  training keeps the drop behaviour so the model never learns from clipped
+  evidence. On the real test split this keeps **546** questions that were
+  previously dropped (46,320 vs 45,774).
+- **`max_option_tokens_used` semantics** (step 7): now records the longest
+  option's raw token count even when it exceeds the budget (0 for noul
+  without criteria text), instead of only counting kept examples.
 
 ## Environment
 

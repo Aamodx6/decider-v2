@@ -194,8 +194,32 @@ def _dev_split(
     return False
 
 
-def load_examples(cfg: Config, split: str, tokenizer: DeciderTokenizer | None = None) -> list[Example]:
+def _truncate_option_texts(q: dict) -> dict:
+    """Return a copy of ``q`` whose option texts are safely truncatable.
+
+    Truncation itself happens in the tokenizer (text -> first
+    ``max_option_tokens`` tokens, ``<opt_end>`` appended outside the cap), so
+    the adapter only needs the question dict unchanged. This hook exists so
+    the truncation policy is visible at the adapter boundary and testable
+    without a tokenizer; it currently returns a shallow copy.
+    """
+    return dict(q)
+
+
+def load_examples(
+    cfg: Config,
+    split: str,
+    tokenizer: DeciderTokenizer | None = None,
+    *,
+    truncate_options: bool = False,
+) -> list[Example]:
     """Load one parquet split into Examples (train/dev for ``train``, test for ``test``).
+
+    Questions whose longest option text exceeds ``max_option_tokens`` are
+    dropped when ``truncate_options=False`` (training default: the model must
+    not learn from clipped evidence) and kept when True (evaluation default:
+    every held-out question gets an answer, with its option texts truncated
+    to the budget by the tokenizer while ``<opt_end>`` is always preserved).
 
     Filtering and the dev carve-out depend on the tokenizer limits and
     ``run_name``, so callers building several example lists from the same
@@ -218,7 +242,8 @@ def load_examples(cfg: Config, split: str, tokenizer: DeciderTokenizer | None = 
     dev_counter: Counter = Counter()
     examples: list[Example] = []
     is_train = split == "train"
-    skipped = Counter()
+    skipped: Counter = Counter()
+    truncated_count = 0
 
     for row in df.itertuples(index=False):
         row_state = row.state
@@ -238,11 +263,16 @@ def load_examples(cfg: Config, split: str, tokenizer: DeciderTokenizer | None = 
                 skipped["bad_label"] += 1
                 continue
             text = _option_text(q)
+            question = q
+            n = 0
             if text is not None:
                 n = len(tokenizer.tok.encode(text, add_special_tokens=False))
                 if n > max_opt:
-                    skipped["option_tokens"] += 1
-                    continue
+                    if not truncate_options:
+                        skipped["option_tokens"] += 1
+                        continue
+                    question = _truncate_option_texts(q)
+                    truncated_count += 1
             n_opts = len(criteria) if isinstance(criteria, (dict, list)) else 2
             if not data_cfg.min_options <= n_opts <= data_cfg.max_options:
                 skipped["option_count"] += 1
@@ -250,18 +280,23 @@ def load_examples(cfg: Config, split: str, tokenizer: DeciderTokenizer | None = 
             examples.append(
                 Example(
                     state=row_state,
-                    question=q,
+                    question=question,
                     label=q["label"],
                     question_name=qname,
                     domain=domain,
                     split=row_split,
-                    max_option_tokens_used=n if text is not None else 0,
+                    max_option_tokens_used=n,
                 )
             )
     if skipped:
         detail = ", ".join(f"{k}={v}" for k, v in sorted(skipped.items()))
         total = sum(skipped.values())
         print(f"[adapters] {split}: kept {len(examples)} examples, skipped {total} ({detail})")
+    if truncated_count:
+        print(
+            f"[adapters] {split}: {truncated_count} question(s) kept with option text "
+            f"truncated to max_option_tokens={max_opt} (<opt_end> preserved)"
+        )
     return examples
 
 
@@ -321,8 +356,17 @@ def load_train_dev(cfg: Config, tokenizer: DeciderTokenizer | None = None) -> tu
     return train, dev
 
 
-def load_test(cfg: Config, tokenizer: DeciderTokenizer | None = None) -> list[Example]:
-    return load_examples(cfg, "test", tokenizer=tokenizer)
+def load_test(
+    cfg: Config,
+    tokenizer: DeciderTokenizer | None = None,
+    *,
+    truncate_options: bool = True,
+) -> list[Example]:
+    """Held-out split: by default every question is kept, over-long option
+    texts truncated to ``max_option_tokens`` (tokenizer keeps ``<opt_end>``);
+    the truncation count is printed. ``truncate_options=False`` reproduces
+    the old drop-over-long behaviour for comparisons."""
+    return load_examples(cfg, "test", tokenizer=tokenizer, truncate_options=truncate_options)
 
 
 def target_index(example: Example) -> int:

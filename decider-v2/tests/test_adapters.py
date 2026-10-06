@@ -183,6 +183,45 @@ def test_filter_long_option_tokens(cfg, tokenizer, parquet_dir: Path):
     assert [e.question_name for e in ex] == ["ok"]
 
 
+def test_load_test_truncates_and_keeps_every_question(parquet_dir: Path, cfg: Config, tokenizer):
+    """Default eval mode: over-long options are kept and truncated, none dropped."""
+    long_q = {"type": "choice", "instructions": "i", "criteria": {"a": "word " * 100, "b": "ok"}, "label": "a"}
+    df = pd.DataFrame([_row("s", {"long": long_q, "ok": CHOICE_Q})])
+    (parquet_dir / "data" / "test.parquet").unlink()
+    df.to_parquet(parquet_dir / "data" / "test.parquet")
+    tok = _tok(cfg, tokenizer)
+    ex = load_test(cfg, tokenizer=tok)
+    assert sorted(e.question_name for e in ex) == ["long", "ok"]
+    long = next(e for e in ex if e.question_name == "long")
+    assert long.max_option_tokens_used > cfg.data.max_option_tokens
+    # serialization must honor the budget and always keep <opt_end>
+    enc = tok.encode_question(long.state, long.question)
+    for block in enc.option_blocks:
+        assert len(block) <= 2 + cfg.data.max_option_tokens
+        assert block[-1] == tok.ids["<opt_end>"]
+    # the target index still points at the right (truncated) option
+    assert target_index(long) == 0
+
+
+def test_load_test_no_truncation_drops(parquet_dir: Path, cfg: Config, tokenizer):
+    """truncate_options=False keeps the old drop behaviour on the test split."""
+    long_q = {"type": "choice", "instructions": "i", "criteria": {"a": "word " * 100}, "label": "a"}
+    df = pd.DataFrame([_row("s", {"long": long_q})])
+    (parquet_dir / "data" / "test.parquet").unlink()
+    df.to_parquet(parquet_dir / "data" / "test.parquet")
+    ex = load_test(cfg, tokenizer=_tok(cfg, tokenizer), truncate_options=False)
+    assert ex == []
+
+
+def test_train_split_always_drops_long_options(cfg, tokenizer, parquet_dir: Path):
+    """Training keeps the skip behaviour regardless of the eval flag."""
+    long_q = {"type": "choice", "instructions": "i", "criteria": {"a": "word " * 100}, "label": "a"}
+    df = pd.DataFrame([_row("s", {"long": long_q})])
+    (parquet_dir / "data" / "train.parquet").unlink()
+    df.to_parquet(parquet_dir / "data" / "train.parquet")
+    assert load_examples(cfg, "train", tokenizer=_tok(cfg, tokenizer), truncate_options=True) == []
+
+
 def test_state_passes_through_verbatim(parquet_dir: Path, cfg: Config, tokenizer):
     """A JSON-looking state string must survive the adapter byte-for-byte.
 
