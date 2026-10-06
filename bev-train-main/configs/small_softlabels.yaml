@@ -1,0 +1,44 @@
+# Sized for a 6GB RTX 4050 laptop GPU: 2k questions, 256-token states, micro-batch 8 x 4
+# accumulation = 32 questions per optimizer step (62 steps/epoch). On a bigger GPU raise
+# max_train_questions to 20000, max_state_tokens to 512, batch_size 16, grad_accum_steps 2.
+seed: 0
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 20
+data:
+  configs:
+  - all
+  max_train_questions: 2000
+  max_test_questions: 0
+  max_dev_questions: 500
+  max_state_tokens: 256
+  max_choice_tokens: 64
+  batch_size: 8
+  num_workers: 4
+lora:
+  target: attn
+  last_k_layers: 12
+  r: 8
+  alpha: 16
+  dropout: 0.0
+head:
+  new_dim: 512
+  num_layers: 2
+  ctx_queries: 0
+loss:
+  label_smoothing: 0.0
+  emd_weight: 0.0
+  use_soft_labels: true
+  balance_types: false
+optim:
+  epochs: 1
+  lr_lora: 0.0001
+  lr_head: 0.001
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 4
+logging:
+  log_every: 20
+  eval_every: 250
+  save_every: 250
