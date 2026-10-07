@@ -112,14 +112,14 @@ def load_questions(split, max_questions=None, seed=0, configs=None, dev_fraction
     if unknown:
         raise ValueError(f"unknown data.configs {unknown}, expected any of {list(DATASET_CONFIGS)}")
     # "val" is carved out of train below; "test" is only ever read for final reporting (train.py never loads it)
-    source_split = "train" if split in ("train", "val") else split
+    source_split = "train" if split in ("train", "val", "dev") else split
     if len(configs) == 1:
         ds = load_dataset(DATASET_NAME, configs[0], split=source_split)
     else:
         ds = concatenate_datasets([load_dataset(DATASET_NAME, config, split=source_split) for config in configs])
 
-    if split in ("train", "val"):
-        keep_val = split == "val"
+    if split in ("train", "val", "dev"):
+        keep_val = split in ("val", "dev")
         # Grouped by normalized state so a repeated state never straddles train and val
         ds = ds.filter(lambda row: is_val_state(row["state"]) == keep_val)
 

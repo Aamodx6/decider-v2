@@ -1,3 +1,4 @@
+import argparse
 import json
 import math
 import random
@@ -25,7 +26,7 @@ def make_loader(split, config, device, shuffle, order=None, dataset=None):
     data = config["data"]
     if split == "train":
         max_questions = data["max_train_questions"]
-    elif split == "val":
+    elif split in ("val", "dev"):
         # Validation is carved out of train (grouped by state); old dev/test caps fall back for it
         max_questions = data.get("max_val_questions",
                                  data.get("max_dev_questions", data.get("max_test_questions")))
@@ -168,7 +169,7 @@ def collect_train_state(optimizer, scheduler, step, epoch, samples_seen, best_va
     }
 
 
-def train(config, run_name, resume=None, resume_state=None):
+def train(config, run_name, resume=None, resume_state=None, emit_resume_every=None):
     seed = config["seed"]
     torch.manual_seed(seed)
     random.seed(seed)
@@ -218,6 +219,7 @@ def train(config, run_name, resume=None, resume_state=None):
     effective_batch = micro * accum  # effective batch (constant under OOM fallback: micro/2 x accum*2)
 
     # loaded/exploded once, reused by every epoch loader (the questions are cached in RAM)
+    epochs = int(optim["epochs"])
     train_dataset = BEVDataset(load_questions("train", data["max_train_questions"], seed,
                                              data.get("configs")),
                                data["max_state_tokens"], data["max_choice_tokens"])
@@ -225,8 +227,6 @@ def train(config, run_name, resume=None, resume_state=None):
     micro_batches_per_epoch = total_questions // micro
     steps_per_epoch = micro_batches_per_epoch // accum  # incomplete final accumulation group is dropped
     total_steps = epochs * steps_per_epoch
-
-    epochs = int(optim["epochs"])
 
     lora_params = [p for p in network.backbone.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW([
@@ -266,8 +266,10 @@ def train(config, run_name, resume=None, resume_state=None):
     best_accuracy = start_best
     network.train()
 
-    save_interval_sec = float(optim.get("resume_save_minutes", 30)) * 60.0
-    last_save = -math.inf
+    # crash-safe rolling save cadence: resume_save_seconds wins, resume_save_minutes is the config unit
+    save_interval_sec = float(optim.get("resume_save_seconds",
+                                        optim.get("resume_save_minutes", 30) * 60.0))
+    last_save = time.time()  # don't save immediately at start; the clock starts with the run
     epoch_loss = epoch_correct = epoch_count = 0
     val_metrics = {}
     global_micro = start_epoch * micro_batches_per_epoch + skip_micro  # micro-batches consumed overall
@@ -316,7 +318,11 @@ def train(config, run_name, resume=None, resume_state=None):
                 logger.save_checkpoint(network, name="latest", step=step)
             if val_loader is not None and step % log["eval_every"] == 0:
                 val_metrics, best_accuracy = validate(network, val_loader, device, logger, step, best_accuracy)
-            if time.time() - last_save >= save_interval_sec:
+            # test hook (--emit-resume-every N) saves a slot exactly at step multiples of N;
+            # normal runs save when the time cadence fires
+            due = (emit_resume_every is not None and step % emit_resume_every == 0) or \
+                time.time() - last_save >= save_interval_sec
+            if due:
                 # crash-safe rolling save into checkpoints/resume (last 2 kept, single cosine schedule)
                 state = collect_train_state(optimizer, scheduler, step, epoch, global_micro * micro,
                                             best_accuracy, micro, accum, total_questions, seed)
@@ -355,11 +361,14 @@ def main():
     parser.add_argument("--resume-state", help="continue the SAME run dir after a crash: a runs/<id> folder with "
                                                "checkpoints/resume/ slot. Restores optimizer, scheduler, RNG and step "
                                                "and appends to its metrics.jsonl (single cosine schedule).")
+    parser.add_argument("--emit-resume-every", type=int, default=None,
+                        help="test hook: write a resume slot every N optimizer steps (instead of the time cadence)")
     args = parser.parse_args()
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
-    train(config, args.name or Path(args.config).stem, args.resume, args.resume_state)
+    train(config, args.name or Path(args.config).stem, args.resume, args.resume_state,
+          emit_resume_every=args.emit_resume_every)
 
 
 if __name__ == "__main__":
