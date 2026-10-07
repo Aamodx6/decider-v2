@@ -1,5 +1,6 @@
 # Python-generated files
 __pycache__/
+.pytest_cache/
 *.py[oc]
 build/
 dist/
@@ -31,3 +32,13 @@ expt_monitoring.md
 setup_cloud.sh
 configs/v*_lora*.yaml
 configs/full_lora_k8*.yaml
+
+# Captured run output and one-off scratch probes (never commit these; they hardcode
+# local run ids and machine-specific paths, so they break for everyone else)
+*.log
+*.txt
+!requirements*.txt
+prof*.py
+bs_sweep*.py
+time_eval*.py
+conc_test*.sh

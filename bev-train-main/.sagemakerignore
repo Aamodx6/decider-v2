@@ -1,0 +1,45 @@
+# Uploaded as SageMaker source_dir, so anything listed here is never tarred or uploaded.
+# Keep it a subset of what .gitignore excludes, plus a few Sagemaker-specific paths.
+
+# Training runs: full of local LoRA + head checkpoints and metrics.jsonl files
+runs/
+
+# HF / datasets caches can be several GB and are re-fetched from S3 at job start (HF_HOME)
+.cache/
+hf_cache/
+*.arrow
+
+# Virtual environments and Python build output
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[oc]
+*.egg-info/
+build/
+dist/
+wheels/
+
+# Git and editor metadata
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+
+# Docs that are not needed to train (the notebook pulls in ~50MB of assets)
+arch.ipynb
+assets/
+reference/
+
+# Local experiment notes and captured run output
+*.log
+*.txt
+!requirements*.txt
+EXPERIMENTS.md
+expt_monitoring.md
+
+# Docker build context: this file and the image definition build the image, they are
+# not needed inside the container
+Dockerfile
+.dockerignore
+.sagemakerignore
