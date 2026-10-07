@@ -21,7 +21,17 @@ Open [`arch.ipynb`](arch.ipynb) for the architecture walkthrough from the livest
 - [`calibrate.py`](calibrate.py): per-task-type temperature scaling fitted on the dev split.
 - [`tests/`](tests/): mask/position, order-invariance, parity, calibration, and smoke tests (pytest).
 
-Dataset: [avbiswas/bev-decision](https://huggingface.co/datasets/avbiswas/bev-decision). Training loads this dataset automatically (the old `bev-decision-150K` id redirects here).
+Dataset: [avbiswas/bev-decision](https://huggingface.co/datasets/avbiswas/bev-decision). Training loads this dataset automatically (the old `bev-decision-150K` id redirects here). The parquet files are
+tracked in-repo under [`bev-decision/`](bev-decision), and `dataset.py` prefers that local copy over the
+Hub id when it is present — `datasets` reads the config definitions from that directory's `README.md`
+card, so `load_dataset` resolves `all` identically either way and no network is needed. Training works
+with or without the directory; delete it and the loader falls back to the Hub.
+
+> **Redistribution.** The dataset is `license: unknown` and asserts **no blanket license**: its card
+> requires consulting each upstream source before redistribution, and calls out the ProofWriter mirror,
+> third-party NVD descriptions, and GoEmotions' Reddit text. Check those terms before relying on the
+> copy here for anything public. See the [Attribution and redistribution](https://huggingface.co/datasets/avbiswas/bev-decision)
+> section of the card, and [SAGEMAKER.md](SAGEMAKER.md) for mirroring it to S3 instead.
 
 Original livestream: [Architecture walkthrough](https://youtube.com/live/AzxoU7kxjig).
 

@@ -1,3 +1,2 @@
 # local tool/dataset dirs that must never enter version control
 .freebuff/
-bev-decision/

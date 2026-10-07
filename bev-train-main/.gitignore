@@ -16,14 +16,17 @@ runs/
 # macOS
 .DS_Store
 
-# Local environments and training/benchmark artifacts
+# Local environments and training/benchmark artifacts.
+# These are anchored to the project root on purpose: an unanchored `data/` would also
+# match bev-decision/data/, which holds the `default` config's parquet (35 MB) and is
+# one of the five files the `all` config concatenates.
 .env
 .envrc
 .local-experiments/
-jevbench/
-bench/
-data/
-server_logs/
+/jevbench/
+/bench/
+/data/
+/server_logs/
 
 # Local experiment recipes, notes, and cloud setup alias
 build_data_*.py

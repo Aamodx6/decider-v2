@@ -1,13 +1,18 @@
 import hashlib
 import json
 import random
+from pathlib import Path
 
 import torch
 from datasets import concatenate_datasets, load_dataset
 
 from tokenization import encode_example, tokenizer
 
-DATASET_NAME = "avbiswas/bev-decision"
+# The dataset is tracked in-repo at bev-decision/. `datasets` reads the config definitions
+# from that directory's README.md card, so a local path resolves exactly like the Hub id does
+# and needs no network. Falls back to the Hub when the directory is absent (partial checkout).
+_LOCAL_DATASET = Path(__file__).resolve().parent / "bev-decision"
+DATASET_NAME = str(_LOCAL_DATASET) if (_LOCAL_DATASET / "README.md").exists() else "avbiswas/bev-decision"
 # data.configs accepts any of these, or "all" for every config at once
 DATASET_CONFIGS = ("default", "hard_50k", "numeric_temporal", "skills", "counterfactual_15k", "all")
 TASK_TYPES = {"choice": 0, "noul": 1, "score": 2}
