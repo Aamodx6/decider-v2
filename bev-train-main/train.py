@@ -1,5 +1,7 @@
-import argparse
 import json
+import math
+import random
+import time
 from pathlib import Path
 
 import torch
@@ -9,35 +11,42 @@ from peft import PeftModel, set_peft_model_state_dict
 from safetensors.torch import load_file
 from transformers import get_cosine_schedule_with_warmup
 
-from dataset import DEV_FRACTION, TASK_TYPES, BEVDataset, collate_fn, load_questions
+from dataset import TASK_TYPES, BEVDataset, collate_fn, load_questions
 from inference import autocast, evaluate, get_device, to_device
 from logger import RunLogger
 from network import build_network
 
 
-def make_loader(split, config, device, shuffle):
+def make_loader(split, config, device, shuffle, order=None, dataset=None):
+    """DataLoader for one split. `order` (a list of dataset indices) replaces shuffling: it is the
+    deterministic per-epoch permutation, sliced past samples_seen when resuming (cheap: indices
+    only, the skipped examples are never tokenized). `dataset` passes a pre-built BEVDataset so
+    the questions are tokenized/loaded once, not once per epoch."""
     data = config["data"]
     if split == "train":
         max_questions = data["max_train_questions"]
-    elif split == "dev":
-        # dev is carved from train (grouped by state); old configs fall back to their test cap
-        max_questions = data.get("max_dev_questions", data.get("max_test_questions"))
+    elif split == "val":
+        # Validation is carved out of train (grouped by state); old dev/test caps fall back for it
+        max_questions = data.get("max_val_questions",
+                                 data.get("max_dev_questions", data.get("max_test_questions")))
     else:
         max_questions = data["max_test_questions"]
-    dataset = BEVDataset(
-        load_questions(split, max_questions, config["seed"], data.get("configs"),
-                       data.get("dev_fraction", DEV_FRACTION)),
-        data["max_state_tokens"], data["max_choice_tokens"],
-    )
-    return torch.utils.data.DataLoader(
-        dataset,
+    if dataset is None:
+        dataset = BEVDataset(
+            load_questions(split, max_questions, config["seed"], data.get("configs")),
+            data["max_state_tokens"], data["max_choice_tokens"],
+        )
+    loader_kwargs = dict(
         batch_size=data["batch_size"],
-        shuffle=shuffle,
+        shuffle=shuffle if order is None else False,
         collate_fn=collate_fn,
         num_workers=data["num_workers"],
-        persistent_workers=data["num_workers"] > 0,  # keep workers alive across epochs and validation passes
+        persistent_workers=data["num_workers"] > 0,  # keep workers alive across epochs/validation
         pin_memory=device.type == "cuda",
     )
+    if order is not None:
+        return torch.utils.data.DataLoader(torch.utils.data.Subset(dataset, order), **loader_kwargs)
+    return torch.utils.data.DataLoader(dataset, **loader_kwargs)
 
 
 def compute_loss(logits, batch, loss_config):
@@ -107,24 +116,85 @@ def load_weights(network, ckpt_dir):
     network.head.load_state_dict(torch.load(ckpt_dir / "head.pt", map_location="cpu"))
 
 
-def validate(network, dev_loader, device, logger, step, best_accuracy):
-    metrics = evaluate(network, dev_loader, device)
-    logger.log(step, split="dev", **metrics)
+def validate(network, val_loader, device, logger, step, best_accuracy):
+    metrics = evaluate(network, val_loader, device)
+    logger.log(step, split="val", **metrics)
     if metrics["accuracy"] > best_accuracy:
         best_accuracy = metrics["accuracy"]
         logger.save_checkpoint(network, name="best", step=step)
     return metrics, best_accuracy
 
 
-def train(config, run_name, resume=None):
-    torch.manual_seed(config["seed"])
+# --- deterministic data order ---------------------------------------------------------------
+# One shape-stable permutation per epoch, from its own generator: restarts (and re-ordered
+# micro-batches under an OOM fallback) can always reconstruct it from (seed, epoch), and
+# resuming skips forward by slicing the index list -- skipped examples are never tokenized.
+PER_EPOCH_PERMUTATION_STEP = 100003
+
+
+def epoch_order(total, seed, epoch):
+    generator = torch.Generator().manual_seed((seed * PER_EPOCH_PERMUTATION_STEP + epoch) % (2 ** 63))
+    return torch.randperm(total, generator=generator).tolist()
+
+
+def rng_state():
+    state = {"torch": torch.get_rng_state(), "python": random.getstate()}
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def set_rng_state(state):
+    torch.set_rng_state(state["torch"].cpu() if hasattr(state["torch"], "cpu") else state["torch"])
+    random.setstate(state["python"])
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state_all([s.cpu() for s in state["cuda"]])
+
+
+def collect_train_state(optimizer, scheduler, step, epoch, samples_seen, best_val,
+                        micro, accum, total_questions, seed):
+    """Everything needed to continue the SAME cosine schedule exactly (single schedule)."""
+    return {
+        "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(),
+        "step": step,
+        "epoch": epoch,
+        "samples_seen": samples_seen,
+        "best_val": best_val,
+        "micro": micro, "accum": accum, "effective_batch": micro * accum,
+        "total_questions": total_questions, "seed": seed,
+        "rng": rng_state(),
+        "saved_at_step_wall": None,  # filled just before the save (readability of the save cadence)
+    }
+
+
+def train(config, run_name, resume=None, resume_state=None):
+    seed = config["seed"]
+    torch.manual_seed(seed)
+    random.seed(seed)
     device = get_device()
     resume_dir, resume_meta = None, {}
     if resume:
         resume_dir = resolve_checkpoint(resume)
         resume_meta = json.loads((resume_dir / "meta.json").read_text())
         config = {**config, "resumed_from": str(resume_dir)}
-    logger = RunLogger(config, run_name, device)
+
+    resumed_state, run_dir, start_step, start_best = None, None, 0, -1.0
+    if resume_state:
+        run_dir = Path(resume_state)
+        resume_root = run_dir / "checkpoints" / "resume"
+        pointer = resume_root / "pointer"
+        if not pointer.exists():
+            raise FileNotFoundError(f"--resume-state: no pointer file under {resume_root} (nothing was saved yet?)")
+        slot = resume_root / pointer.read_text().strip()
+        resumed_state = torch.load(slot / "train_state.pt", map_location="cpu", weights_only=False)
+        resume_dir = slot  # LoRA + head weights come from the same slot
+        config = {**config, "resumed_state_from": str(run_dir)}
+        # --resume-state continues the SAME run dir and appends to the SAME metrics.jsonl
+        logger = RunLogger(config, run_name, device, run_dir=run_dir)
+        print(f"resuming state from {slot} (step {resumed_state['step']}, best_val {resumed_state['best_val']:.4f})")
+    else:
+        logger = RunLogger(config, run_name, device)
     model, lora, optim, log = config["model"], config["lora"], config["optim"], config["logging"]
 
     head_config = {**config["head"], "num_task_types": len(TASK_TYPES)}
@@ -132,40 +202,89 @@ def train(config, run_name, resume=None):
                             lora["last_k_layers"], head_config, lora.get("target", "attn"))
     if resume_dir:
         load_weights(network, resume_dir)
-        print(f"Loaded LoRA + head weights from {resume_dir} (step {resume_meta['step']})")
+        where = f"weights {resume_dir}"
+        if resumed_state:
+            where += f" + optimizer/scheduler/RNG (step {resumed_state['step']})"
+        else:
+            where += f" (weights only; saved at step {resume_meta['step']})"
+        print(f"Loaded {where}")
     network = network.to(device)
     count = lambda params: sum(p.numel() for p in params if p.requires_grad)
     print(f"trainable params: backbone={count(network.backbone.parameters()):,} head={count(network.head.parameters()):,}")
 
-    train_loader = make_loader("train", config, device, shuffle=True)
-    # Best checkpoint is selected on dev (carved from train, grouped by state); the test split is only
-    # read by inference.py for final reporting, never during training (that was a leak)
-    dev_cap = config["data"].get("max_dev_questions", config["data"].get("max_test_questions"))
-    dev_loader = None
-    if dev_cap != 0:
-        dev_loader = make_loader("dev", config, device, shuffle=False)
+    data = config["data"]
+    micro = int(data["batch_size"])
+    accum = int(optim.get("grad_accum_steps", 1))
+    effective_batch = micro * accum  # effective batch (constant under OOM fallback: micro/2 x accum*2)
+
+    # loaded/exploded once, reused by every epoch loader (the questions are cached in RAM)
+    train_dataset = BEVDataset(load_questions("train", data["max_train_questions"], seed,
+                                             data.get("configs")),
+                               data["max_state_tokens"], data["max_choice_tokens"])
+    total_questions = len(train_dataset)
+    micro_batches_per_epoch = total_questions // micro
+    steps_per_epoch = micro_batches_per_epoch // accum  # incomplete final accumulation group is dropped
+    total_steps = epochs * steps_per_epoch
+
+    epochs = int(optim["epochs"])
 
     lora_params = [p for p in network.backbone.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW([
         {"params": lora_params, "lr": float(optim["lr_lora"])},
         {"params": network.head.parameters(), "lr": float(optim["lr_head"])},
     ], weight_decay=float(optim["weight_decay"]))
-    # grad_accum_steps > 1 splits each optimizer step over that many loader batches (batch_size is per micro-batch)
-    accum = optim.get("grad_accum_steps", 1)
-    total_steps = optim["epochs"] * (len(train_loader) // accum)
     scheduler = get_cosine_schedule_with_warmup(optimizer, int(optim["warmup_ratio"] * total_steps), total_steps)
 
     step = 0
-    best_accuracy = -1.0
-    if resume_dir and dev_loader is not None:
-        _, best_accuracy = validate(network, dev_loader, device, logger, step, best_accuracy)
+    start_epoch = 0
+    skip_micro = 0
+    if resumed_state is not None:
+        optimizer.load_state_dict(resumed_state["optimizer"])
+        scheduler.load_state_dict(resumed_state["scheduler"])
+        step = int(resumed_state["step"])
+        start_best = float(resumed_state["best_val"])
+        start_epoch = step // steps_per_epoch
+        skip_micro = (step % steps_per_epoch) * accum  # micro-batches already consumed in this epoch
+        if resumed_state.get("total_questions") != total_questions:
+            raise ValueError(f"train set changed since the save: {resumed_state.get('total_questions')} -> {total_questions}")
+        if resumed_state.get("effective_batch") != effective_batch:
+            print(f"note: effective batch changed {resumed_state.get('effective_batch')} -> {effective_batch} "
+                  f"(micro {resumed_state.get('micro')}->{micro}); positions still align by optimizer step")
+        set_rng_state(resumed_state["rng"])
+        torch.cuda.empty_cache()
+
+    val_cap = data.get("max_val_questions",
+                       data.get("max_dev_questions", data.get("max_test_questions")))
+    val_loader = None
+    if val_cap != 0:
+        # Best checkpoint and all in-training evals run on val (carved from train, state-grouped);
+        # the test split is only read by inference.py for final reporting, never during training.
+        val_loader = make_loader("val", config, device, shuffle=False)
+
+    if val_loader is not None and (step == 0 or resumed_state is not None):
+        _, start_best = validate(network, val_loader, device, logger, step, start_best)
+    best_accuracy = start_best
     network.train()
-    for epoch in range(optim["epochs"]):
+
+    save_interval_sec = float(optim.get("resume_save_minutes", 30)) * 60.0
+    last_save = -math.inf
+    epoch_loss = epoch_correct = epoch_count = 0
+    val_metrics = {}
+    global_micro = start_epoch * micro_batches_per_epoch + skip_micro  # micro-batches consumed overall
+
+    for epoch in range(start_epoch, epochs):
+        order = epoch_order(total_questions, seed, epoch)
+        if epoch == start_epoch:
+            # resume middle-of-epoch: skip the already-consumed head of this epoch's permutation
+            order = order[skip_micro * micro:]
+            skip_micro = 0
+        epoch_loader = make_loader("train", config, device, shuffle=False, order=order, dataset=train_dataset)
         epoch_loss, epoch_correct, epoch_count = 0.0, 0, 0
         optimizer.zero_grad()
-        for micro, batch in enumerate(train_loader, 1):
-            if micro > (len(train_loader) // accum) * accum:
-                break  # drop the incomplete final accumulation group
+        micro_in_epoch = 0
+        for batch in epoch_loader:
+            if micro_in_epoch >= steps_per_epoch * accum:
+                break  # drop the incomplete final accumulation group (deterministic)
             batch = to_device(batch, device)
             with autocast(device):
                 logits = network(**batch)
@@ -176,7 +295,9 @@ def train(config, run_name, resume=None):
             epoch_loss += loss.item() * len(logits)
             epoch_correct += correct
             epoch_count += len(logits)
-            if micro % accum:
+            micro_in_epoch += 1
+            global_micro += 1
+            if micro_in_epoch % accum:
                 continue
 
             torch.nn.utils.clip_grad_norm_(network.parameters(), optim["grad_clip"])
@@ -189,22 +310,38 @@ def train(config, run_name, resume=None):
                 lrs = {"lr_head": scheduler.get_last_lr()[1]}
                 if lora_params:
                     lrs["lr_lora"] = scheduler.get_last_lr()[0]
-                logger.log(step, split="train", epoch=epoch, loss=loss.item(), accuracy=correct / len(logits), **lrs)
+                logger.log(step, split="train", epoch=epoch, loss=loss.item(),
+                           accuracy=correct / len(logits), **lrs)
             if step % log["save_every"] == 0:
                 logger.save_checkpoint(network, name="latest", step=step)
-            if dev_loader is not None and step % log["eval_every"] == 0:
-                dev_metrics, best_accuracy = validate(network, dev_loader, device, logger, step, best_accuracy)
-
+            if val_loader is not None and step % log["eval_every"] == 0:
+                val_metrics, best_accuracy = validate(network, val_loader, device, logger, step, best_accuracy)
+            if time.time() - last_save >= save_interval_sec:
+                # crash-safe rolling save into checkpoints/resume (last 2 kept, single cosine schedule)
+                state = collect_train_state(optimizer, scheduler, step, epoch, global_micro * micro,
+                                            best_accuracy, micro, accum, total_questions, seed)
+                logger.save_resume_state(network, state)
+                last_save = time.time()
         logger.log(step, split="train_epoch", epoch=epoch, loss=epoch_loss / epoch_count,
                    accuracy=epoch_correct / epoch_count)
+        # a crash right at an epoch boundary resumes at the next epoch's first micro-batch
+        if micro_in_epoch >= steps_per_epoch * accum and epoch + 1 < epochs:
+            state = collect_train_state(optimizer, scheduler, step, epoch + 1, global_micro * micro,
+                                        best_accuracy, micro, accum, total_questions, seed)
+            logger.save_resume_state(network, state)
+            last_save = time.time()
 
-    summary = {"final_train_loss": epoch_loss / epoch_count, "final_train_accuracy": epoch_correct / epoch_count}
-    if dev_loader is not None:
+    if val_loader is not None:
         if step % log["eval_every"] != 0:
-            dev_metrics, best_accuracy = validate(network, dev_loader, device, logger, step, best_accuracy)
-        summary["dev"] = dev_metrics
-        summary["best_dev_accuracy"] = best_accuracy
+            val_metrics, best_accuracy = validate(network, val_loader, device, logger, step, best_accuracy)
+    elif log.get("eval_every"):
+        logger.log(step, split="val", accuracy=math.nan, note="val disabled (max_val_questions=0)")
 
+    summary = {"final_train_loss": epoch_loss / epoch_count, "final_train_accuracy": epoch_correct / epoch_count,
+               "total_steps": step}
+    if val_loader is not None:
+        summary["val"] = val_metrics
+        summary["best_val_accuracy"] = best_accuracy
     ckpt_dir = logger.save_checkpoint(network, step=step)
     logger.finish(checkpoint=str(ckpt_dir), **summary)
 
@@ -215,11 +352,14 @@ def main():
     parser.add_argument("--name", help="run name, used as runs/<name>-<timestamp> (default: config file name)")
     parser.add_argument("--resume", help="start from a checkpoint's LoRA + head weights: an experiment id "
                                          "(uses its final checkpoint) or a checkpoint folder. Optimizer and LR schedule start fresh.")
+    parser.add_argument("--resume-state", help="continue the SAME run dir after a crash: a runs/<id> folder with "
+                                               "checkpoints/resume/ slot. Restores optimizer, scheduler, RNG and step "
+                                               "and appends to its metrics.jsonl (single cosine schedule).")
     args = parser.parse_args()
 
     with open(args.config) as f:
         config = yaml.safe_load(f)
-    train(config, args.name or Path(args.config).stem, args.resume)
+    train(config, args.name or Path(args.config).stem, args.resume, args.resume_state)
 
 
 if __name__ == "__main__":

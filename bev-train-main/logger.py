@@ -1,4 +1,6 @@
 import json
+import os
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -13,16 +15,28 @@ from network import BEVNetwork, ChoiceHead, load_backbone
 class RunLogger:
     """Each training run gets runs/<name>-<timestamp>/ with config, metrics and checkpoints (LoRA + head only)."""
 
-    def __init__(self, config, run_name, device, root="runs"):
+    def __init__(self, config, run_name, device, root="runs", run_dir=None):
         self.config = config
-        self.exp_id = f"{run_name}-{datetime.now():%Y%m%d-%H%M%S}"
-        self.run_dir = Path(root) / self.exp_id
-        self.run_dir.mkdir(parents=True)
+        if run_dir is not None:
+            # --resume-state continues the SAME run dir and appends to its metrics.jsonl
+            self.run_dir = Path(run_dir)
+            self.run_dir.mkdir(parents=True, exist_ok=True)
+            self.exp_id = self.run_dir.name
+            self.appended = (self.run_dir / "metrics.jsonl").exists()
+        else:
+            self.exp_id = f"{run_name}-{datetime.now():%Y%m%d-%H%M%S}"
+            self.run_dir = Path(root) / self.exp_id
+            self.run_dir.mkdir(parents=True)
+            self.appended = False
         self.start_time = time.time()
 
-        self.write_config(self.run_dir)
+        config_path = self.run_dir / "config.yaml"
+        if not config_path.exists():
+            self.write_config(self.run_dir)
         with open(self.run_dir / "run.json", "w") as f:
-            json.dump({"exp_id": self.exp_id, "device": str(device), "started_at": datetime.now().isoformat()}, f, indent=2)
+            json.dump({"exp_id": self.exp_id, "device": str(device),
+                       "started_at": datetime.now().isoformat(),
+                       "resumed_into": self.appended}, f, indent=2)
         print(f"Experiment {self.exp_id} -> {self.run_dir}")
 
     def write_config(self, directory):
@@ -57,6 +71,55 @@ class RunLogger:
             }, f, indent=2)
         print(f"Saved checkpoint -> {ckpt_dir}")
         return ckpt_dir
+
+    def save_resume_state(self, network, train_state):
+        """Crash-safe rolling save into run_dir/checkpoints/resume/{slot_a,slot_b} + a pointer file.
+
+        Both slots are kept, so the last two saves always exist. Writing goes: clear the UNUSED
+        slot, write LoRA + head + train_state.pt into it completely, then flip a single-line
+        pointer file (pointer.tmp written first, then os.replace -> atomic on Windows). A crash
+        mid-write can only ever damage a slot that is not currently visible, and the previous
+        good save stays readable. slots are small (LoRA ranks + 512-input head + optimizer state).
+        """
+        resume_dir = self.run_dir / "checkpoints" / "resume"
+        resume_dir.mkdir(parents=True, exist_ok=True)
+        slots = [resume_dir / "slot_a", resume_dir / "slot_b"]
+        pointer = resume_dir / "pointer"
+
+        current = pointer.read_text().strip() if pointer.exists() else None
+        target = slots[1] if current == "slot_a" else slots[0]  # default to slot_a on first save
+
+        # fresh tmp write first (a partially written slot is never the pointed-to one)
+        tmp = resume_dir / (f".tmp_{target.name}")
+        if tmp.exists():
+            shutil.rmtree(tmp)
+        tmp.mkdir()
+        if isinstance(network.backbone, PeftModel):
+            network.backbone.save_pretrained(tmp / "lora")
+        torch.save({k: v.cpu() for k, v in network.head.state_dict().items()}, tmp / "head.pt")
+        torch.save(train_state, tmp / "train_state.pt")
+        with open(tmp / "meta.json", "w") as f:
+            json.dump({"exp_id": self.exp_id, "step": train_state["step"],
+                       "saved_at": datetime.now().isoformat()}, f, indent=2)
+
+        # flip the pointer atomically: readers may see the old slot but never a half-written one
+        tmp_pointer = resume_dir / "pointer.tmp"
+        tmp_pointer.write_text(target.name)
+        if tmp.exists():  # move the finished tmp dir into its slot name
+            if target.exists():
+                shutil.rmtree(target)
+            os.replace(tmp, target)
+        os.replace(tmp_pointer, pointer)
+        return resume_dir
+
+    def latest_resume_state(self):
+        """Path to the newest readable resume slot (or None before the first save ever finished)."""
+        resume_dir = self.run_dir / "checkpoints" / "resume"
+        pointer = resume_dir / "pointer"
+        if not pointer.exists():
+            return None
+        slot = resume_dir / pointer.read_text().strip()
+        return slot if (slot / "train_state.pt").exists() else None
 
     def finish(self, **summary):
         summary["duration_sec"] = round(time.time() - self.start_time, 1)

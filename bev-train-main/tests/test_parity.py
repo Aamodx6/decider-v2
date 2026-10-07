@@ -1,7 +1,7 @@
 """answer() probabilities must match the evaluate() path (same dataset + collate + forward)."""
 import torch
 
-from dataset import BEVDataset, collate_fn, question_to_choices
+from dataset import BEVDataset, collate_fn, domain_id, question_to_choices
 from inference import answer, evaluate
 
 META = {"max_state_tokens": 128, "max_choice_tokens": 32}
@@ -24,7 +24,7 @@ def make_row(question):
     choices, label, label_probs = question_to_choices(question)
     return {"state": STATE, "task_type": {"choice": 0, "noul": 1, "score": 2}[question["type"]],
             "instructions": question["instructions"], "choices": choices, "label": label,
-            "domain": DOMAIN, "label_probs": label_probs or []}
+            "domain": DOMAIN, "domain_id": domain_id(DOMAIN), "label_probs": label_probs or []}
 
 
 def test_answer_matches_evaluate_path(networks):

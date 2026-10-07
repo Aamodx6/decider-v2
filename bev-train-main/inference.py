@@ -5,7 +5,8 @@ from collections import defaultdict
 import torch
 import torch.nn.functional as F
 
-from dataset import TASK_NAMES, TASK_TYPES, BEVDataset, collate_fn, load_questions, question_to_choices
+from dataset import (TASK_NAMES, TASK_TYPES, BEVDataset, collate_fn, domain_name_for_id,
+                     load_questions, question_to_choices)
 from logger import load_checkpoint
 from tokenization import encode_example
 
@@ -24,8 +25,8 @@ def autocast(device):
 
 
 def to_device(batch, device):
-    # strings (domains) and lists pass through untouched
-    return {k: v.to(device, non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
+    # the batch is all tensors now (per-domain ids replaced the old domain strings)
+    return {k: v.to(device, non_blocking=True) for k, v in batch.items()}
 
 
 def domain_slug(domain):
@@ -67,12 +68,15 @@ def binary_auc(scores, labels):
 @torch.no_grad()
 def evaluate(network, dataloader, device, temperatures=None):
     """Accuracy per task type and per domain, noul AUC, and ECE (10 bins, top-label) overall,
-    per type and per domain. temperatures (from calibration.json) are applied when given."""
+    per type and per domain. Domains are grouped by the batch's numeric domain_id (network.forward
+    ignores the extra kwarg) and mapped back to names only for the metric keys.
+    temperatures (from calibration.json) are applied when given."""
     network.eval()
     total_loss, correct, count = 0.0, defaultdict(int), defaultdict(int)
     noul_p_yes, noul_labels = [], []
     conf, hit = [], []                      # overall top-label calibration
-    by_type, by_domain = defaultdict(lambda: ([], [])), defaultdict(lambda: ([], []))
+    by_type = defaultdict(lambda: ([], []))
+    by_id = defaultdict(lambda: ([], []))   # domain_id -> (confidences, hits)
 
     for batch in dataloader:
         batch = to_device(batch, device)
@@ -86,15 +90,15 @@ def evaluate(network, dataloader, device, temperatures=None):
         hits = prediction == batch["labels"]
         conf += confidence.tolist()
         hit += hits.tolist()
-        for task_type, domain, c, h in zip(batch["task_type"].tolist(), batch["domain"],
-                                           confidence.tolist(), hits.tolist()):
+        for task_type, dom, c, h in zip(batch["task_type"].tolist(), batch["domain_id"].tolist(),
+                                        confidence.tolist(), hits.tolist()):
             name = TASK_NAMES[task_type]
             count[name] += 1
             correct[name] += h
             by_type[name][0].append(c)
             by_type[name][1].append(h)
-            by_domain[domain][0].append(c)
-            by_domain[domain][1].append(h)
+            by_id[dom][0].append(c)
+            by_id[dom][1].append(h)
 
         is_noul = batch["task_type"] == TASK_TYPES["noul"]
         noul_p_yes += probs[is_noul][:, 1].tolist()
@@ -106,8 +110,8 @@ def evaluate(network, dataloader, device, temperatures=None):
     for name in count:
         metrics[f"accuracy_{name}"] = correct[name] / count[name]
         metrics[f"ece_{name}"] = top_label_ece(*by_type[name])
-    for domain, (d_conf, d_hit) in by_domain.items():
-        slug = domain_slug(domain)
+    for dom, (d_conf, d_hit) in by_id.items():
+        slug = domain_slug(domain_name_for_id(dom))
         metrics[f"accuracy_domain_{slug}"] = sum(d_hit) / len(d_hit)
         metrics[f"ece_domain_{slug}"] = top_label_ece(d_conf, d_hit)
     if 0 < sum(noul_labels) < len(noul_labels):
@@ -123,7 +127,7 @@ def answer(network, meta, state, question, device):
     choices, _, _ = question_to_choices(question)
     example = encode_example(state, question["instructions"], choices, question["type"],
                              meta["max_state_tokens"], meta["max_choice_tokens"])
-    example.update(task_type=TASK_TYPES[question["type"]], label=None)
+    example.update(task_type=TASK_TYPES[question["type"]], label=None, domain_id=0)
     batch = to_device(collate_fn([example]), device)
 
     with autocast(device):
