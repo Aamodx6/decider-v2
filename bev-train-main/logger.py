@@ -15,7 +15,7 @@ from network import BEVNetwork, ChoiceHead, load_backbone
 class RunLogger:
     """Each training run gets runs/<name>-<timestamp>/ with config, metrics and checkpoints (LoRA + head only)."""
 
-    def __init__(self, config, run_name, device, root="runs", run_dir=None):
+    def __init__(self, config, run_name, device, root=None, run_dir=None):
         self.config = config
         if run_dir is not None:
             # --resume-state continues the SAME run dir and appends to its metrics.jsonl
@@ -24,6 +24,9 @@ class RunLogger:
             self.exp_id = self.run_dir.name
             self.appended = (self.run_dir / "metrics.jsonl").exists()
         else:
+            # RUNS_ROOT lets SageMaker place runs under /opt/ml/output/data, the only
+            # directory it uploads. Defaults to ./runs, so local runs are unchanged.
+            root = root or os.environ.get("RUNS_ROOT", "runs")
             self.exp_id = f"{run_name}-{datetime.now():%Y%m%d-%H%M%S}"
             self.run_dir = Path(root) / self.exp_id
             self.run_dir.mkdir(parents=True)

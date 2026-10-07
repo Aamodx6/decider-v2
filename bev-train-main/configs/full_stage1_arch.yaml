@@ -1,0 +1,62 @@
+# RUNG B — RUNG A + arch.md's stage-1 recipe (arch.md:341). Optimiser only, no architecture.
+#
+#   arch.md stage 1        this file
+#   LoRA r=16 a=32 MLP     same
+#   all kept layers        same
+#   LoRA lr 2e-4           1.0e-4   <- changed
+#   warmup 3%              5%       <- changed
+#   batch 128              64       <- changed (32 x 4)
+#   head lr 1e-3           same
+#   cosine, AdamW wd 0.01  same
+#   grad-clip 1.0          same
+#
+# Effective batch stays a multiple of the micro-batch, so the 4-D B x L x L attention mask
+# is unchanged in size and this still fits a 24GB A10G.
+seed: 0
+
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 20
+
+data:
+  configs: [all]
+  max_train_questions: null
+  max_test_questions: 0
+  max_dev_questions: 5000
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  batch_size: 32
+  num_workers: 12
+
+lora:
+  target: attn_mlp
+  last_k_layers: 20
+  r: 16
+  alpha: 32
+  dropout: 0.0
+
+head:
+  new_dim: 512
+  num_layers: 2
+  ctx_queries: 0
+
+loss:
+  label_smoothing: 0.0
+  emd_weight: 0.0
+  use_soft_labels: false
+  balance_types: false
+
+optim:
+  epochs: 1
+  lr_lora: 2.0e-4             # was 1.0e-4 (arch.md stage 1)
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.03          # was 0.05 (arch.md stage 1)
+  grad_clip: 1.0
+  grad_accum_steps: 4         # 32 x 4 = 128 effective (arch.md stage 1)
+  resume_save_seconds: 300
+
+logging:
+  log_every: 20
+  eval_every: 1000
+  save_every: 500

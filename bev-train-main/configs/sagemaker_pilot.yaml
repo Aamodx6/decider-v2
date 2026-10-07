@@ -1,0 +1,57 @@
+# Pilot: measure real throughput before committing to a 15-24h full run.
+#
+# From this run's metrics.jsonl:
+#   qps = (last_step - first_step) * effective_batch / (last_time - first_time)
+#   full_epoch_hours = 420_552 / qps / 3600
+#
+# Note the attention mask is a full 4-D B x L x L tensor (dataset.py:207), so runtime scales
+# roughly quadratically in max_state_tokens. Do not extrapolate 1024 from this 512 run
+# arithmetically — measure at 1024 too, or just run the full ladder at 1024 and accept the cost.
+seed: 0
+
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 20
+
+data:
+  configs: [all]
+  max_train_questions: 20000     # was null (~420,552)
+  max_test_questions: 0
+  max_dev_questions: 2000
+  max_state_tokens: 512           # was 1024; halves the quadratic term
+  max_choice_tokens: 64
+  batch_size: 16                  # 16 x 4 keeps effective batch at 64
+  num_workers: 12                 # g5.4xlarge: 16 vCPU
+
+lora:
+  target: attn_mlp
+  last_k_layers: 20
+  r: 16
+  alpha: 32
+  dropout: 0.0
+
+head:
+  new_dim: 512
+  num_layers: 2
+  ctx_queries: 0
+
+loss:
+  label_smoothing: 0.0
+  emd_weight: 0.0
+  use_soft_labels: false
+  balance_types: false
+
+optim:
+  epochs: 1
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 4
+  resume_save_seconds: 300
+
+logging:
+  log_every: 20
+  eval_every: 250
+  save_every: 250

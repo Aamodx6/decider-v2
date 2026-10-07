@@ -1,0 +1,56 @@
+# RUNG A — one change from full_lora_mlp.yaml: LoRA scope widens from the last 12 kept
+# layers to ALL 20 kept layers (arch.md:46, :341).
+#
+# Rationale: the small ladder's only winner was attn_mlp r=16 on layers 8-19 (+4.0 pts).
+# arch.md asks for r=16 on *all kept* layers. last_k_layers: 20 makes layers 0-19
+# trainable; nothing in the code needed changing for it.
+#
+# Everything else is identical to full_lora_mlp.yaml so the comparison is clean.
+seed: 0
+
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 20
+
+data:
+  configs: [all]
+  max_train_questions: null   # whole `all` train split (~420,552 questions after the val carve-out)
+  max_test_questions: 0
+  max_dev_questions: 5000
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  batch_size: 32
+  num_workers: 12             # g5.4xlarge has 16 vCPU; the tokenizer runs per item in these workers
+
+lora:
+  target: attn_mlp
+  last_k_layers: 20           # was 12 — the only change in this rung
+  r: 16
+  alpha: 32
+  dropout: 0.0
+
+head:
+  new_dim: 512
+  num_layers: 2
+  ctx_queries: 0              # measured -6.5 pts in the small ladder; stays off
+
+loss:
+  label_smoothing: 0.0
+  emd_weight: 0.0
+  use_soft_labels: false      # covers only 1.62% of questions
+  balance_types: false
+
+optim:
+  epochs: 1
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 2
+  resume_save_seconds: 300    # rolling save + S3 sync every 5 min, not 30
+
+logging:
+  log_every: 20
+  eval_every: 1000
+  save_every: 500
