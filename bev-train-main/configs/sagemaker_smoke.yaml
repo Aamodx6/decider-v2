@@ -1,0 +1,55 @@
+# Gate before any long run: overfits 10 questions in ~3 minutes and touches every call site
+# that could break on the DLC's torch/transformers/peft version skew.
+#
+# What it exercises: Qwen3Model.from_pretrained with num_hidden_layers override
+# (network.py:143), get_peft_model + LoraConfig with a regex target (network.py:165),
+# build_network, the full train loop, and RunLogger checkpoint writes.
+# train.py:113 reads .missing_keys/.unexpected_keys off set_peft_model_state_dict, which is
+# the call most likely to have shifted across peft versions.
+#
+# Pass: loss trends to ~0, accuracy to 1.0, and a "Saved checkpoint ->" line.
+# A loss stuck near 1.4 (uniform over 2-3 options) means it is not learning — check the
+# [entry] torch line printed by sagemaker_entry.verify_gpu.
+seed: 0
+
+model:
+  name: Qwen/Qwen3-0.6B
+  num_layers: 20
+
+data:
+  configs: [all]
+  max_train_questions: 10
+  max_test_questions: 0
+  max_dev_questions: 50
+  max_state_tokens: 512
+  max_choice_tokens: 64
+  batch_size: 5
+  num_workers: 2
+
+lora:
+  target: attn
+  last_k_layers: 4
+  r: 8
+  alpha: 16
+  dropout: 0.0
+
+head:
+  new_dim: 512
+  num_layers: 2
+  ctx_queries: 0
+
+loss: {}
+
+optim:
+  epochs: 30
+  lr_lora: 1.0e-4
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  grad_clip: 1.0
+  grad_accum_steps: 1
+
+logging:
+  log_every: 2
+  eval_every: 1000
+  save_every: 1000
