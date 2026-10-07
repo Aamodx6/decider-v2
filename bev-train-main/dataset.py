@@ -4,7 +4,7 @@ import random
 from pathlib import Path
 
 import torch
-from datasets import concatenate_datasets, load_dataset
+from datasets import Features, Sequence, Value, concatenate_datasets, load_dataset
 
 from tokenization import encode_example, tokenizer
 
@@ -17,6 +17,24 @@ DATASET_NAME = str(_LOCAL_DATASET) if (_LOCAL_DATASET / "README.md").exists() el
 DATASET_CONFIGS = ("default", "hard_50k", "numeric_temporal", "skills", "counterfactual_15k", "all")
 TASK_TYPES = {"choice": 0, "noul": 1, "score": 2}
 TASK_NAMES = {v: k for k, v in TASK_TYPES.items()}
+
+# explode_questions() emits an empty list for rows with no soft labels, which is every row
+# outside the `skills` config (~7%). Left to inference, `map` types label_probs from
+# whichever batch it happens to see first: a batch with no soft labels yields list<null>,
+# and the first batch that does contain them then fails to cast double into null. That
+# breaks any load large enough to span several batches over the concatenated `all` config.
+# Declaring the schema up front fixes the type once, and keeps the empty list meaningful
+# as "no soft label" (collate_fn and compute_loss both test it for truthiness).
+EXPLODED_FEATURES = Features({
+    "state": Value("string"),
+    "task_type": Value("int64"),
+    "instructions": Value("string"),
+    "choices": Sequence(Value("string")),
+    "label": Value("int64"),
+    "label_probs": Sequence(Value("float32")),
+    "domain": Value("string"),
+    "domain_id": Value("int64"),
+})
 
 # The dataset has no validation split. Val is carved out of train with a deterministic rule on
 # the normalized state text alone: ~1/VAL_STATE_MODULUS (~0.5%) of distinct states, state-grouped
@@ -135,7 +153,8 @@ def load_questions(split, max_questions=None, seed=0, configs=None, dev_fraction
         # ~1.83 questions per training row (measured): 2x + 32 rows covers the cap after exploding,
         # without materializing questions for rows that get cut
         ds = ds.select(sorted(order[:min(len(ds), int(max_questions * 2) + 32)]))
-    ds = ds.map(explode_questions, batched=True, remove_columns=ds.column_names)
+    ds = ds.map(explode_questions, batched=True, remove_columns=ds.column_names,
+                features=EXPLODED_FEATURES)
     if max_questions is not None:
         ds = ds.select(range(min(max_questions, len(ds))))
     return ds
