@@ -1,5 +1,0 @@
-# SDK deps only. torch is deliberately absent: it comes from the PyTorch DLC, because
-# installing the version uv.lock pins (2.14 + CUDA 13) needs a driver >= 580 that no AWS
-# image provides. Do not add torch, torchvision or a CUDA toolkit here.
-sagemaker>=2.240
-boto3>=1.34
