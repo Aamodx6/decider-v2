@@ -308,40 +308,46 @@ region, repeated, for content that never changes.
 Run this **once**, on any machine with internet. A throwaway `ml.m5.xlarge` job costs about $0.50
 and keeps your laptop out of it.
 
+`scripts/prepare_s3_cache.py` does the download and the upload (boto3, so no AWS CLI needed):
+
 ```bash
 export HF_HOME=/tmp/hf
-python - <<'PY'
-from huggingface_hub import snapshot_download
+pip install boto3 huggingface_hub
 
-# Backbone: tokenizer + weights. dataset.py/tokenization.py load this by name.
-snapshot_download("Qwen/Qwen3-0.6B", cache_dir="/tmp/hf/hub")
-
-# Dataset. repo_type="dataset" lands it in the same hub/ layout that `load_dataset` looks in,
-# so dataset.py's load_dataset("avbiswas/bev-decision", ...) resolves it with zero code changes.
-snapshot_download("avbiswas/bev-decision", repo_type="dataset", cache_dir="/tmp/hf/hub")
-print("done")
-PY
-
-aws s3 sync /tmp/hf s3://$BUCKET/hf-cache
+python scripts/prepare_s3_cache.py upload --bucket $BUCKET --region $AWS_REGION
+python scripts/prepare_s3_cache.py verify --bucket $BUCKET
 ```
 
-Set `HF_HOME=/cache/hf` on the job and restore the cache before training:
+It downloads both repos with `snapshot_download` into `$HF_HOME/hub`, uploads that tree to
+`s3://$BUCKET/hf-cache/`, and writes a manifest so `verify` can detect a truncated upload.
+
+**Target `$HF_HOME/hub`, not `$HF_HOME`.** `snapshot_download(cache_dir=...)` creates
+`<cache_dir>/models--<repo>`, and HF only resolves a by-name lookup under `$HF_HOME/hub`. Both
+`--cache-dir` and `--dest` default to that path for exactly this reason.
+
+> **The dataset card is not optional.** The configs `default`, `hard_50k`, `numeric_temporal`,
+> `skills`, `counterfactual_15k` and `all` are defined in the YAML frontmatter of the repo's
+> `README.md`, not by directory names — `all` is a virtual config listing all five parquet paths.
+> Without the card, `load_dataset("avbiswas/bev-decision", "all")` cannot resolve. Both `upload`
+> and `restore` fail loudly if the card is absent rather than letting it break at training time.
+
+Restore it in the training container before `train.py` runs:
 
 ```bash
-aws s3 sync s3://$BUCKET/hf-cache /cache/hf --no-progress
+python scripts/prepare_s3_cache.py restore --bucket $BUCKET --dest /cache/hf/hub --region $AWS_REGION
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 ```
 
 **How this works with no code changes:** `datasets` and `transformers` both resolve a repo by
-name through `HF_HOME/hub`. As long as `cache_dir` matches, `dataset.py:117`
-(`load_dataset(DATASET_NAME, configs[0], split=source_split)`) and
-`tokenization.py:9` (`AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")`) find the cached copies and
-never touch the network. `HF_HUB_OFFLINE=1` turns "the network is unreachable" from a hang into a
-fast, explicit error.
+name through `$HF_HOME/hub`. With the tree restored there, `dataset.py:117`
+(`load_dataset(DATASET_NAME, configs[0], split=source_split)`) and `tokenization.py:9`
+(`AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")`) find the cached copies and never touch the
+network. `HF_HUB_OFFLINE=1` turns "the network is unreachable" from a hang into a fast, explicit
+error.
 
-`/cache` on the EBS volume, **not** `/opt/ml/output/data` — output is synced to S3 at job end and
-you do not want 9 GB of model cache in your output bucket.
+Use `/cache/hf/hub`, on the EBS volume — **not** `/opt/ml/output/data`, which is synced to S3 at
+job end and you do not want ~2 GB of model cache in your output bucket.
 
 ---
 
@@ -447,16 +453,21 @@ S3_SYNC_URI = os.environ.get("S3_SYNC_URI", "")  # e.g. s3://bucket/runs
 
 
 def restore_hf_cache():
-    """Populate HF_HOME from S3 so the container never needs internet."""
+    """Populate HF_HOME/hub from S3 so the container never needs internet."""
     if not S3_SYNC_URI:
         return
-    cache = Path(os.environ["HF_HOME"])
-    bucket = S3_SYNC_URI.rsplit("/runs", 1)[0] + "/hf-cache"
-    cache.mkdir(parents=True, exist_ok=True)
-    print(f"[entry] restoring HF cache from {bucket}", flush=True)
+    hub = Path(os.environ.get("HF_HOME", "/cache/hf")) / "hub"
+    bucket = S3_SYNC_URI.rsplit("/runs", 1)[0]
+    hub.mkdir(parents=True, exist_ok=True)
+    print(f"[entry] restoring HF cache from {bucket}/hf-cache", flush=True)
     subprocess.run(
-        ["aws", "s3", "sync", bucket, str(cache), "--no-progress"], check=True
-    )
+        [sys.executable, "scripts/prepare_s3_cache.py", "restore",
+         "--bucket", bucket.split("//", 1)[-1].split("/", 1)[0],
+         "--dest", str(hub),
+         "--region", os.environ.get("AWS_REGION", "us-east-1")],
+        check=True)
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_DATASETS_OFFLINE"] = "1"
 
 
 def verify_gpu():
