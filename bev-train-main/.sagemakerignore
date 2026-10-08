@@ -43,3 +43,6 @@ expt_monitoring.md
 Dockerfile
 .dockerignore
 .sagemakerignore
+
+# CI builds the image out of S3; the training job never needs the build definition
+buildspec.yml

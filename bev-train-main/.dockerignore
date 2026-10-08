@@ -24,3 +24,4 @@ assets/
 Dockerfile
 .dockerignore
 .sagemakerignore
+buildspec.yml

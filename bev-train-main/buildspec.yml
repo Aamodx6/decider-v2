@@ -1,0 +1,42 @@
+# CodeBuild build for the SageMaker training image.
+#
+# Why this exists: SageMaker Studio notebook instances have no container runtime (no
+# dockerd, no containerd, no systemd), so the image cannot be built on the instance you
+# drive the uploads from. CodeBuild runs the daemon server-side and pushes under its own
+# service role, which also means no AWS keys are needed anywhere local.
+#
+# The `files` block above it is supplied by the project's S3 source location: whatever you
+# `aws s3 sync` into s3://<bucket>/build-src/ becomes the build context. `.dockerignore`
+# still trims it, so the S3 copy only needs to exclude the big local artifacts.
+#
+# BASE: the DLC that Dockerfile:13 pins is `2.8.0-cu128-py311-ubuntu22.04`, which no longer
+# exists -- AWS retired that `cu1xx-py3xx` tag scheme. The replacement scheme is
+# `<version>-gpu-py<python>-cu<cuda>-ubuntu<os>-ec2-v<n>`. This base ships Python 3.12 and
+# CUDA 12.9; `docker run` is not needed to confirm the driver pairing because
+# Dockerfile:42 asserts `torch.version.cuda is not None` at build time.
+version: 0.2
+
+env:
+  variables:
+    REPO_NAME: jev-train
+    IMAGE_TAG: latest
+    BASE: public.ecr.aws/deep-learning-containers/pytorch-training:2.8.0-gpu-py312-cu129-ubuntu22.04-ec2-v1.49
+
+phases:
+  pre_build:
+    commands:
+      - echo "Logging in to ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      # The Dockerfile ARG default is dead; override it here so a fixed Dockerfile and a
+      # working build do not depend on each other.
+      - echo "Building $IMAGE_TAG from $BASE"
+  build:
+    commands:
+      - docker build --build-arg BASE=$BASE -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG .
+  post_build:
+    commands:
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG
+      - echo "Pushed $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG"
+      # Set JEV_IMAGE to this URI before launching; launch_sagemaker.py:115 refuses to
+      # start without it.
+      - echo "export JEV_IMAGE=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG"

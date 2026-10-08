@@ -10,7 +10,16 @@
 # Qwen3Model.from_pretrained, get_peft_model, and set_peft_model_state_dict in ~3 minutes.
 # train.py:113 reads .missing_keys/.unexpected_keys off set_peft_model_state_dict, which is
 # the call most likely to have moved across peft versions.
-ARG BASE=763104351884.dkr.ecr.us-east-1.amazonaws.com/pytorch-training:2.8.0-cu128-py311-ubuntu22.04
+# Public gallery, not the 763104351884.dkr.ecr.<region> copy: the DLC is published to every
+# AWS region there, but the public URI resolves without an ECR authorization token, which
+# keeps `docker build` working for anyone without AWS credentials.
+#
+# Do not go back to the `2.8.0-cu128-py311-ubuntu22.04` layout AWS used before the 2.7/2.8
+# transition. AWS retired that scheme; the replacement is
+# `<version>-gpu-py<python>-cu<cuda>-ubuntu<os>-ec2-v<n>`, and the old tag now 404s on a
+# manifest pull. buildspec.yml pins the same image so a fixed Dockerfile and a CI build do
+# not drift apart.
+ARG BASE=public.ecr.aws/deep-learning-containers/pytorch-training:2.8.0-gpu-py312-cu129-ubuntu22.04-ec2-v1.49
 FROM ${BASE}
 
 RUN pip install --no-cache-dir \
