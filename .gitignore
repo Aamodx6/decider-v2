@@ -1,2 +1,27 @@
 # local tool/dataset dirs that must never enter version control
 .freebuff/
+.venv-gpu/
+__pycache__/
+*.pyc
+
+# decider-v2
+# gitignore has NO trailing comments: "#" after whitespace is part of the PATTERN, not a comment.
+# `ref/   # pristine clones` therefore matches nothing. Both of the next two were silently
+# un-ignored until this was fixed -- ref/ is 30 MB of upstream clones and _dryrun_s3/ is 82 GB of
+# stubbed S3, so a `git add -A` would have tried to commit them.
+# pristine upstream clones (bev-train, bev-decider, jevbench, sysone-bench)
+ref/
+# offline boto3/sagemaker stubs used only by dryrun_notebook.py
+_dryrun/
+_dryrun_s3/
+_dryrun_*.txt
+_dryrun_out*
+
+# extracted from the notebook at runtime, and the notebook's state
+decider_v2_work/
+decider_v2_src/
+decider_v2_state.json
+
+# generated reports
+RESULTS.md
+RESULTS_by_type.png

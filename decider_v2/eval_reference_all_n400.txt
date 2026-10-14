@@ -1,0 +1,145 @@
+﻿python.exe : [transformers] config.json has 'model_type=bev-decider' but you overrode it with 'model_type=qwen3'. This 
+may lead to unexpected behavior.
+At line:2 char:1
++ & $py evaluate.py --reference avbiswas/bev-decider-0.4B --test_channe ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([transformers] ...ected behavior.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+F:\Jev\.venv-gpu\Lib\site-packages\torch\nn\modules\module.py:1370: UserWarning: expandable_segments not supported on 
+this platform (Triggered internally at 
+C:\actions-runner\_work\pytorch\pytorch\pytorch\c10/cuda/CUDAAllocatorConfig.h:39.)
+  return t.to(
+[transformers] You are using a model of type `bev-decider` to instantiate a model of type ``. This may be expected if 
+you are loading a checkpoint that shares a subset of the architecture (e.g., loading a `sam2_video` checkpoint into 
+`Sam2Model`), but is otherwise not supported and can yield errors. Please verify that the checkpoint is compatible 
+with the model you are instantiating.
+  eval 20/125 batches (160 questions)
+  eval 40/125 batches (320 questions)
+  eval 60/125 batches (480 questions)
+  eval 80/125 batches (640 questions)
+  eval 100/125 batches (800 questions)
+  eval 120/125 batches (960 questions)
+{
+  "n_questions": 1000,
+  "accuracy": 0.6869999766349792,
+  "nll": 0.7729378938674927,
+  "ece": 0.03811667945981025,
+  "accuracy_by_type": {
+    "choice": 0.6872791519434629,
+    "noul": 0.8333333333333334,
+    "score": 0.5412844036697247
+  },
+  "count_by_type": {
+    "choice": 566,
+    "noul": 216,
+    "score": 218
+  },
+  "accuracy_by_domain": {
+    "Browser interaction": 0.866667,
+    "Civic and safety operations": 0.647059,
+    "Engagement and ranking": 0.8,
+    "Game-state decisions": 1.0,
+    "Reading comprehension": 0.685714,
+    "Response preference and quality": 0.521472,
+    "Retail, product, and shopping": 0.822785,
+    "Scientific and paper understanding": 0.789474,
+    "Sensory quality rating": 0.272727,
+    "Sentiment, emotion, and moderation": 0.789474,
+    "Software engineering and code": 0.659091,
+    "Spam detection": 0.909091,
+    "Spatial and logical reasoning": 0.622449,
+    "Support and intent routing": 0.875,
+    "Tool and workflow decisions": 1.0
+  },
+  "count_by_domain": {
+    "Browser interaction": 15,
+    "Civic and safety operations": 17,
+    "Engagement and ranking": 5,
+    "Game-state decisions": 4,
+    "Reading comprehension": 70,
+    "Response preference and quality": 163,
+    "Retail, product, and shopping": 79,
+    "Scientific and paper understanding": 19,
+    "Sensory quality rating": 11,
+    "Sentiment, emotion, and moderation": 152,
+    "Software engineering and code": 88,
+    "Spam detection": 11,
+    "Spatial and logical reasoning": 294,
+    "Support and intent routing": 32,
+    "Tool and workflow decisions": 40
+  },
+  "source": {
+    "reference": "avbiswas/bev-decider-0.4B",
+    "model_type": "bev-decider",
+    "version": "0.4.0",
+    "format": "merged",
+    "backbone_config": "backbone_config.json",
+    "backbone_dtype": "bf16",
+    "num_layers": 20,
+    "head": {
+      "new_dim": 512,
+      "num_layers": 2,
+      "num_task_types": 3
+    },
+    "task_types": {
+      "choice": 0,
+      "noul": 1,
+      "score": 2
+    },
+    "max_state_tokens_train": 1024,
+    "max_state_tokens": 2048,
+    "max_choice_tokens": 64,
+    "source_checkpoint": "run_15-20260928-074927/step-12000",
+    "derived_from": {
+      "base_model": "Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca",
+      "lora": {
+        "r": 8,
+        "alpha": 16,
+        "layers": [
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19
+        ]
+      }
+    },
+    "transformers_version": "5.17.0",
+    "resolved_max_state_tokens": 2048,
+    "resolved_max_choice_tokens": 64
+  },
+  "invariance_gate_max_abs_delta": 1e-05,
+  "order_invariance": {
+    "max_abs_delta": 3.6954879760742188e-06,
+    "examples_checked": 24,
+    "shuffles_per_example": 8,
+    "k_range": [
+      3,
+      12
+    ],
+    "gate": 1e-05,
+    "pass": true,
+    "nonfinite_logits": 0,
+    "worst_case": {
+      "example_index": 6,
+      "k": 5,
+      "perm": [
+        0,
+        1,
+        3,
+        4,
+        2
+      ]
+    }
+  }
+}
+wrote predictions -> F:\Jev\_smoke_runs\gpu_ref\predictions.csv
+wrote metrics -> F:\Jev\_smoke_runs\gpu_ref\metrics_ref.json

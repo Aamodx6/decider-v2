@@ -1,0 +1,28 @@
+# requirements.txt -- EXACT pins for the SageMaker training job.
+#
+# These are the versions every number in LOCAL_VERIFICATION.md and ARCH_REVIEW.md was produced
+# with. train.py verifies them at job start (`--env_check`, on by default) and ABORTS on any
+# mismatch, because a silently-upgraded transformers changes the 4-D attention-mask path this whole
+# project depends on (ARCH_V2.md: transformers 5.x returns the [B,1,L,L] mask as-is).
+#
+# Installed by the notebook (cell 2) and by the container. SageMaker's PyTorch container cannot be
+# relied on to already contain these, so the job installs them itself -- see train.py, which runs
+# `pip install -r requirements.txt` on first entry when the check fails.
+#
+# Constraints checked against PyPI metadata rather than assumed:
+#   transformers 5.15.0  requires huggingface-hub >=1.5.0,<2.0 and tokenizers >=0.22.0,<=0.23.0.
+#                         huggingface-hub is now at 2.x on PyPI, so the 1.33.0 pin below is load-
+#                         bearing: an unpinned install resolves to 2.x and transformers will not
+#                         import. tokenizers 0.23.0 does not exist; 0.22.2 is the newest that does.
+#   numpy 2.3.5          requires Python >=3.11 -> the container must be py311 or newer.
+#   pyarrow 25.0.1       required by datasets 5.1.0 (>=24.0.0); ships cp311 and cp312 wheels.
+#   safetensors/tokenizers are abi3 or pure-python wheels, so they are not Python-version bound.
+transformers==5.15.0
+peft==0.21.2
+datasets==5.1.0
+huggingface_hub==1.33.0
+tokenizers==0.22.2
+safetensors==0.8.0
+accelerate==1.15.0
+numpy==2.3.5
+pyarrow==25.0.1

@@ -1,0 +1,25 @@
+﻿==============================================================================
+PACKED-vs-SEPARATE EQUIVALENCE under a 4-D additive mask + shared position ids
+==============================================================================
+tiny Qwen3: hidden=64 layers=2 heads=4 kv_heads=2 head_dim=16
+fp32, eval mode, no grad
+
+--- attn_implementation=eager
+  [k=3 opts [4,4,4]] k=3  max|packed - separate| = 4.768e-07
+  [k=5 uneven      ] k=5  max|packed - separate| = 4.768e-07
+  [k=8 uneven      ] k=8  max|packed - separate| = 4.768e-07
+
+--- attn_implementation=sdpa
+  [k=3 opts [4,4,4]] k=3  max|packed - separate| = 6.258e-07
+  [k=5 uneven      ] k=5  max|packed - separate| = 4.768e-07
+  [k=8 uneven      ] k=8  max|packed - separate| = 4.768e-07
+
+==============================================================================
+  eager  k=3 opts [4,4,4]  4.768e-07  PASS
+  eager  k=5 uneven        4.768e-07  PASS
+  eager  k=8 uneven        4.768e-07  PASS
+  sdpa   k=3 opts [4,4,4]  6.258e-07  PASS
+  sdpa   k=5 uneven        4.768e-07  PASS
+  sdpa   k=8 uneven        4.768e-07  PASS
+==============================================================================
+RESULT: ALL PASS

@@ -1,0 +1,60 @@
+{
+  "backbone_20": {
+    "embeddings": 155582464,
+    "decoder": 314619904,
+    "final_norm": 1024,
+    "total": 470202368
+  },
+  "backbone_24": {
+    "embeddings": 155582464,
+    "decoder": 377543680,
+    "final_norm": 1024,
+    "total": 533126144
+  },
+  "head_v1": {
+    "total": 7364608,
+    "trainable": 7364608
+  },
+  "head_v2_head v2 ctx+rank  d=512 L=2 n_ctx=8": {
+    "total": 10779137,
+    "trainable": 10779137
+  },
+  "head_v2_head v2 ctx+rank+null d=512 L=2": {
+    "total": 10779649,
+    "trainable": 10779649
+  },
+  "head_v2_head v2 no-ctx (selfattn only)": {
+    "total": 9199617,
+    "trainable": 9199617
+  },
+  "baseline: r=8 attn-only layers 8-19 (of 20)": {
+    "lora_params": 983040,
+    "backbone_total": 471185408,
+    "adapted_modules": 48,
+    "regex": ".*layers\\.(8|9|10|11|12|13|14|15|16|17|18|19)\\.self_attn\\.(q_proj|k_proj|v_proj|o_proj)"
+  },
+  "v2:       r=16 attn+MLP all 20 layers": {
+    "lora_params": 7208960,
+    "backbone_total": 477411328,
+    "adapted_modules": 140,
+    "regex": "(.*layers\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19)\\.self_attn\\.(q_proj|k_proj|v_proj|o_proj))|.*layers\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19)\\.mlp\\.(gate_proj|up_proj|down_proj)"
+  },
+  "v2 ablation: r=8 attn-only layers 8-19": {
+    "lora_params": 983040,
+    "backbone_total": 471185408,
+    "adapted_modules": 48,
+    "regex": ".*layers\\.(8|9|10|11|12|13|14|15|16|17|18|19)\\.self_attn\\.(q_proj|k_proj|v_proj|o_proj)"
+  },
+  "v2 ablation: r=16 attn+MLP all 24 layers": {
+    "lora_params": 8650752,
+    "backbone_total": 541776896,
+    "adapted_modules": 168,
+    "regex": "(.*layers\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23)\\.self_attn\\.(q_proj|k_proj|v_proj|o_proj))|.*layers\\.(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23)\\.mlp\\.(gate_proj|up_proj|down_proj)"
+  },
+  "totals": {
+    "baseline_replica": 478550016,
+    "v2": 488190465,
+    "published_bev_decider_total": 477566976,
+    "published_bev_decider_head": 7364608
+  }
+}

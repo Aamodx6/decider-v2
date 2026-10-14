@@ -1,0 +1,180 @@
+﻿python : Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate 
+limits and faster downloads.
+At line:1 char:32
++ ... ONIOENCODING="utf-8"; python F:\Jev\recon\recon_stats.py 2>&1 | Out-F ...
++                           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Warning: You ar...ster downloads.:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+
+==============================================================================
+A. DOMAIN TABLE (complete)
+==============================================================================
+28 distinct domains; total rows 276,188
+  Sentiment, emotion, and moderation                      rows=  26,631 ( 9.64%)  questions=  68,994
+  Support and intent routing                              rows=  26,446 ( 9.58%)  questions=  31,595
+  Retail, product, and shopping                           rows=  19,883 ( 7.20%)  questions=  40,455
+  Spatial and logical reasoning                           rows=  19,579 ( 7.09%)  questions=  54,788
+  Financial reporting and banking                         rows=  18,610 ( 6.74%)  questions=  25,890
+  Temporal and unit reasoning                             rows=  17,274 ( 6.25%)  questions=  26,477
+  Rule-conditioned decisions                              rows=  13,895 ( 5.03%)  questions=  13,895
+  Multi-hop reading and evidence                          rows=  10,980 ( 3.98%)  questions=  25,736
+  Tool and workflow decisions                             rows=  10,937 ( 3.96%)  questions=  14,052
+  Answer and solution verification                        rows=  10,901 ( 3.95%)  questions=  17,371
+  Trap and adversarial reading                            rows=   9,860 ( 3.57%)  questions=  15,915
+  Software engineering and code                           rows=   9,286 ( 3.36%)  questions=  10,758
+  Scientific and paper understanding                      rows=   9,133 ( 3.31%)  questions=  19,561
+  Time-sensitive reading                                  rows=   8,873 ( 3.21%)  questions=  17,746
+  Response preference and quality                         rows=   8,693 ( 3.15%)  questions=  18,509
+  Policy and rule reasoning                               rows=   8,555 ( 3.10%)  questions=  29,484
+  Software security                                       rows=   7,000 ( 2.53%)  questions=  14,000
+  Final-value extraction                                  rows=   6,992 ( 2.53%)  questions=   6,992
+  Calibrated probability                                  rows=   5,518 ( 2.00%)  questions=   6,656
+  Browser interaction                                     rows=   4,786 ( 1.73%)  questions=   4,786
+  Contract evidence                                       rows=   4,500 ( 1.63%)  questions=   4,500
+  Engagement and ranking                                  rows=   4,248 ( 1.54%)  questions=   4,248
+  Reading comprehension                                   rows=   3,619 ( 1.31%)  questions=   3,619
+  Long contracts and legal documents                      rows=   3,345 ( 1.21%)  questions=   8,748
+  Spam detection                                          rows=   2,209 ( 0.80%)  questions=   2,209
+  Game-state decisions                                    rows=   2,000 ( 0.72%)  questions=  13,151
+  Sensory quality rating                                  rows=   1,300 ( 0.47%)  questions=   1,300
+  Civic and safety operations                             rows=   1,135 ( 0.41%)  questions=   1,135
+
+==============================================================================
+B. ABSTENTION-LIKE CHOICE KEYS (the 'null option' question)
+==============================================================================
+choice questions                          : 224,880
+  with >=1 abstention-like key in criteria : 52,709 (23.44%)
+  where that key IS the label             : 13,558 (6.03%)
+
+top abstention-like keys: key -> (times it is the label / times it appears)
+  unknown                   5,392 /  16,228
+  not_stated                5,320 /  15,769
+  none_at_that_time         1,076 /   8,873
+  not_determined            1,022 /   8,555
+  none                        746 /   3,282
+  insufficient_information      2 /       2
+
+most frequent labels: {'option_2': 9101, 'option_1': 6909, 'yes': 6317, 'option_3': 5925, 'unknown': 5392, 'not_stated': 5320, 'no': 4092, 'option_0': 3832, 'test_1': 2612, 'not_mentioned': 2410, 'option_4': 2276, 'headline_b': 2156, 'headline_a': 2092, 'test_3': 2080, 'test_2': 2029}
+
+==============================================================================
+C. NOUL LABEL BALANCE  /  SCORE LABEL + LEVELS
+==============================================================================
+noul questions 208,677  labels={True: 80355, False: 128322}  label-is-int(bool subclass)=208,677
+score questions 69,013  label-is-int=69,013
+score (n_levels, label) -> count, top 20:
+  K=4 label=0 : 9,202
+  K=4 label=3 : 8,137
+  K=4 label=1 : 7,851
+  K=4 label=2 : 7,522
+  K=5 label=4 : 5,865
+  K=5 label=2 : 5,172
+  K=5 label=3 : 4,627
+  K=5 label=1 : 3,628
+  K=3 label=1 : 3,618
+  K=3 label=0 : 3,115
+  K=5 label=0 : 1,966
+  K=7 label=5 : 1,433
+  K=7 label=6 : 1,426
+  K=7 label=0 : 1,383
+  K=3 label=2 : 1,260
+  K=7 label=4 : 1,081
+  K=7 label=3 : 918
+  K=7 label=2 : 733
+  K=7 label=1 : 76
+
+per-K label distribution:
+  K=3 n=  7,993 : 0:39.0%, 1:45.3%, 2:15.8%
+  K=4 n= 32,712 : 0:28.1%, 1:24.0%, 2:23.0%, 3:24.9%
+  K=5 n= 21,258 : 0:9.2%, 1:17.1%, 2:24.3%, 3:21.8%, 4:27.6%
+  K=7 n=  7,050 : 0:19.6%, 1:1.1%, 2:10.4%, 3:13.0%, 4:15.3%, 5:20.3%, 6:20.2%
+
+==============================================================================
+D. TRUNCATION IMPACT at max_choice_tokens=64 / max_state_tokens=1024
+==============================================================================
+sampled 11,567 train rows (every 20th)
+states > 1024 tokens: 897 (7.75%)  -> truncated by bev recipe
+options > 64 tokens  : 332 total; lengths {66: 1, 67: 5, 68: 3, 69: 1, 70: 4, 71: 2, 72: 3, 74: 3, 75: 2, 76: 1, 77: 2, 78: 3, 79: 2, 80: 2, 82: 3, 83: 1, 84: 3, 85: 2, 86: 3, 87: 2, 88: 3, 89: 4, 91: 5, 92: 3, 95: 1, 96: 1, 98: 1, 99: 3, 100: 2, 101: 1, 102: 2, 103: 4, 104: 1, 105: 1, 106: 2, 108: 2, 110: 3, 111: 5, 113: 1, 114: 3, 115: 5, 116: 3, 118: 2, 120: 2, 121: 1, 122: 3, 123: 4, 124: 2, 125: 1, 126: 1, 127: 1, 128: 2, 130: 1, 131: 2, 132: 3, 136: 1, 137: 1, 138: 3, 140: 1, 142: 1, 143: 1, 145: 3, 146: 1, 148: 1, 150: 1, 151: 1, 152: 1, 153: 3, 160: 2, 161: 2, 162: 1, 164: 2, 166: 1, 167: 2, 173: 1, 175: 1, 176: 1, 179: 1, 180: 2, 181: 3, 182: 1, 183: 2, 184: 1, 185: 1, 186: 2, 188: 1, 189: 1, 190: 1, 192: 1, 193: 1, 195: 1, 196: 3, 197: 2, 199: 1, 200: 1, 202: 1, 203: 1, 204: 1, 206: 2, 207: 1, 208: 2, 209: 2, 211: 1, 212: 2, 213: 2, 216: 1, 217: 1, 220: 1, 222: 3, 224: 1, 226: 2, 227: 1, 228: 2, 230: 1, 231: 2, 232: 1, 233: 3, 234: 1, 235: 3, 236: 1, 239: 1, 240: 2, 241: 1, 243: 1, 246: 3, 247: 1, 248: 1, 250: 1, 254: 1, 255: 1, 256: 2, 261: 2, 266: 1, 272: 2, 273: 1, 275: 1, 276: 1, 281: 1, 282: 1, 284: 2, 286: 1, 287: 1, 289: 1, 293: 1, 294: 1, 296: 1, 299: 1, 301: 3, 305: 3, 306: 1, 309: 1, 310: 1, 311: 4, 314: 2, 315: 1, 316: 1, 317: 1, 319: 1, 320: 2, 323: 4, 329: 1, 330: 1, 334: 2, 335: 1, 337: 3, 338: 1, 340: 2, 343: 1, 344: 1, 348: 1, 349: 1, 351: 2, 356: 1, 358: 1, 360: 1, 361: 1, 363: 1, 365: 1, 366: 1, 371: 1, 372: 1, 376: 1, 378: 1, 379: 3, 380: 1, 383: 1, 393: 2, 396: 1, 398: 1, 400: 1, 401: 1, 409: 1, 411: 1, 420: 1, 426: 1, 438: 1, 454: 1, 492: 1, 774: 1}
+(question-level rate computed separately)
+
+==============================================================================
+E. QUESTIONS PER ROW
+==============================================================================
+{1: 153528, 2: 72064, 3: 25551, 4: 11374, 5: 4609, 6: 6074, 7: 1803, 8: 10, 9: 1175}
+max 9
+
+==============================================================================
+F. SPLIT-LEVEL COUNTS per source batch (config all)
+==============================================================================
+train: 231,332 rows
+test: 44,856 rows
+
+==============================================================================
+G. BENCHMARK REPOS
+==============================================================================
+
+https://api.github.com/repos/instax-dutta/sysone-bench
+  FOUND: instax-dutta/sysone-bench  license={'key': 'mit', 'name': 'MIT License', 'spdx_id': 'MIT', 'url': 'https://api.github.com/licenses/mit', 'node_id': 'MDc6TGljZW5zZTEz'}  desc=First independent head-to-head benchmark of System One decision models (Laya vs Jev) on byte-identical inputs
+
+https://api.github.com/search/repositories?q=jevbench
+  total=58
+   - fstandhartinger/jevbench  JevBench v1 - a benchmark for Jev-class typed decision models: smart, cheap, fast, reliable, open.
+   - dhruvmehra/jevbench  Benchmark TypeSafe JEV against LLMs, fine-tuned BERT, Laya and zero-shot NLI on text classification: accuracy, calibration, latency, throughput, cost
+   - blockbrain-ai/cygnet-recipe  Typed decisions from frozen Gemma-4-12B-it: one-token option-letter readout over stock vLLM 0.30.0 (JevBench package)
+   - JevBench/jevbench  None
+   - allebee/jevk5  JevK5: open-weight alternative to TypeSafe Jev. Typed decisions with probabilities in one forward pass; Apache-2.0 weights and code.
+   - v-modal/awesome-jev-tools  A curated list of tools  built for Jev ΓÇö TypeSafe AI's System One model for typed decisions.
+   - hopit-ai/hopper  Hopper: single-pass decision models (Qwen3.5-4B and Gemma-4-12B adapters) and their JevBench-compatible server
+   - rapidstartup/jevbench  JevBench public leaderboard site (jevbench.dev)
+   - JacobEGarcia/jevbench  None
+   - Leanmcp/jevbench  JevBench: an open evaluation framework for typed decision models (calibration, option-order sensitivity, paired comparisons)
+
+https://api.github.com/search/repositories?q=sysone-bench
+  total=1
+   - instax-dutta/sysone-bench  First independent head-to-head benchmark of System One decision models (Laya vs Jev) on byte-identical inputs
+
+https://api.github.com/users/instax-dutta/repos?per_page=100
+  87 repos
+   - 3d-web-contents
+   - agentloop
+   - aiscribe
+   - AMZRelay
+   - amz_nrt
+   - ansora
+   - apex-discord-scraper
+   - Auralyn
+   - awesome-browser-games
+   - Bandwith-Usage-Dashboard
+   - binify
+   - brand-vibes
+   - cl-chat-reborn
+   - Credit-Card-Fraud-Detection
+   - DadGuard
+   - darpa-audit
+   - deep-shaft
+   - dox-init
+   - elipso-theme
+   - email-aliases-creator
+   - epoxy
+   - FactorYG
+   - finetune-llm
+   - flash-compare
+   - FlaskPasswordManagerApp
+   - Forensic-Recovery
+   - genielabs
+   - geo-seo-universal
+   - github-profile-trophy
+   - github-readme-stats
+   - glm-tic
+   - gmail-automator
+   - google-code-review
+   - gsd-skills
+   - heretic
+   - heretic-grimoire
+   - heretic-live-agent
+   - hinglish-bench
+   - instax-dutta
+   - IPRecon
+
+https://api.github.com/repos/avbiswas/bev-decider
+  FOUND: avbiswas/bev-decider  license={'key': 'apache-2.0', 'name': 'Apache License 2.0', 'spdx_id': 'Apache-2.0', 'url': 'https://api.github.com/licenses/apache-2.0', 'node_id': 'MDc6TGljZW5zZTI='}  desc=None
