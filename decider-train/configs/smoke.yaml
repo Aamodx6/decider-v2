@@ -1,0 +1,53 @@
+# Smoke: a minute-scale plumbing check, not a measurement.
+#
+# Verifies the full path (dataset load -> encode -> train -> checkpoint -> auto_resume->) without
+# spending money or an afternoon. Downloads Qwen3-0.6B (~1.2 GB) on first use. 100 steps on a GPU
+# is about half a minute of compute; on CPU expect minutes. Nothing in this file's numbers should
+# be read as model quality -- the tiny limit_* shards can't support that.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  last_k_layers: 4
+  include_mlp: 0
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 8
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+
+data:
+  max_state_tokens: 512
+  max_choice_tokens: 64
+  limit_train: 2000
+  limit_val: 200
+  num_workers: 2
+
+optim:
+  batch_size: 4
+  grad_accum_steps: 1
+  max_steps: 100
+  epochs: 2
+  lr_lora: 2.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 10
+  eval_every: 50
+  save_every: 50

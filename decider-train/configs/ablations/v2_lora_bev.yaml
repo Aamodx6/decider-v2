@@ -1,0 +1,63 @@
+# Tier-2 ablation: v2 head + v2 loss, but bev-decider's own LoRA shape.
+#
+# One change vs configs/decider_v2.yaml — r 16->8, alpha 32->16 (so alpha/r stays 2.0, matching
+# both arms' effective LoRA scale), attn+MLP on the last 20 -> attn-only on the last 12.
+#
+# The load-bearing ablation: Tier 1 changes the LoRA, the head AND the loss at once, so a raw
+# v2-vs-baseline delta cannot say which one did the work. If the gain survives here, the head
+# and loss carry it and the wide LoRA does not; if it vanishes, the LoRA is doing the work.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  last_k_layers: 12
+  include_mlp: 0
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+  use_derived: 0
+  derived_dropout: 0.15
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 2
+  max_steps: 14688
+  epochs: 2
+  lr_lora: 2.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 20
+  eval_every: 3672
+  save_every: 3672

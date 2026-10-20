@@ -1,0 +1,71 @@
+# decider_v2 long: the 12k-step recipe's schedule stretched to 25-30k steps at effective batch 128.
+#
+# The prompt for this repo asks for a "25-30k step, batch 128" long option; docs/ARCH_V2.md does not
+# document one (its budget section fixes the 14,688-step x 64-presentation recipe), so this file is
+# the recipe's exact values with ONLY the budget scaled. What is scaled and why:
+#
+#   batch_size 32 stays, grad_accum_steps 2 -> 4  (effective batch 128 presentations/step)
+#   max_steps 14,688 -> 29,376                    (2x the steps)
+#   -> 29,376 steps x 32 x 4 = 3,760,512 presentations, i.e. ~4x the 940K baseline budget,
+#      ~9.7 epochs of the 388,748-question carved train split.
+#
+# Nothing else changes vs configs/decider_v2.yaml. Note the honest caveat that ARCH_V2.md draws for
+# the short recipe: the original card's own numbers (12,000 steps at batch 64 vs 940K presentations)
+# cannot both be distinct-data budgets, so a longer run changes the data-repetition regime rather
+# than approximating the published recipe ever more closely. It exists for one question:
+# does v2's gap to the baseline close as the LR schedule coasts past 15k steps?
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  last_k_layers: 20
+  include_mlp: 1
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+  use_derived: 0
+  derived_dropout: 0.15
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 4
+  max_steps: 29376
+  epochs: 10
+  lr_lora: 2.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 50
+  eval_every: 3672
+  save_every: 3672

@@ -1,0 +1,71 @@
+# Tier-2 ablation: stage 2 -- hard-negative fine-tune of the stage-1 v2 champion.
+#
+# Per docs/ARCH_V2.md Tier-2 table: `--resume <ckpt> --lr_lora 5e-5 --lr_head 2.5e-4`,
+# i.e. learning rate / 4 on a checkpoint that already exists. Everything else is the
+# decider_v2.yaml recipe unchanged.
+#
+# HOW TO RUN: stage 2 cannot start from thin air -- pass the stage-1 `best` checkpoint on the
+# command line:
+#
+#   python train.py --config configs/ablations/v2_stage2.yaml \
+#       --resume runs/model/best --train_channel ... --val_channel ...
+#
+# The budget: --max_steps is left unset, so the run is denominated in --epochs (2) from the
+# resumed step counter (the budget footgun fix makes --epochs exact in this mode). Override
+# --max_steps on the command line if you want the fine-tune bounded in steps instead.
+# Mining the stage-1 hard negatives into a train-dev file is a data step, not a code step; the
+# same recipe runs unchanged on it.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  last_k_layers: 20
+  include_mlp: 1
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+  use_derived: 0
+  derived_dropout: 0.15
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 2
+  epochs: 2
+  lr_lora: 5.0e-05
+  lr_head: 2.5e-04
+  warmup_ratio: 0.0
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 20
+  eval_every: 500
+  save_every: 500

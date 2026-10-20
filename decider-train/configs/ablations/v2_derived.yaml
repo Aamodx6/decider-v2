@@ -1,0 +1,66 @@
+# Tier-2 ablation: the deterministic DERIVED pre-pass on, dropout 0.15.
+#
+# One change vs configs/decider_v2.yaml — use_derived 1, plus the optional extra
+# (`uv sync --extra derived`; pip install dateparser pint) that normalize.py needs.
+#
+# Dates (regex + dateparser), money and units (pint) are extracted and appended to the state
+# before tokenisation. The pre-pass emits only what it finds, and the trainer drops the block 15%
+# of the time (derived_dropout) so the model degrades gracefully when it finds nothing.
+# No synthetic data: the mixture already contains numeric_temporal (19,806 rows, 43 calculation
+# types) and counterfactual_15k (7,500 label-flipping pairs) — generating more would break the
+# identical-data rule the paired arms rely on.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  last_k_layers: 20
+  include_mlp: 1
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+  use_derived: 1
+  derived_dropout: 0.15
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 2
+  max_steps: 14688
+  epochs: 2
+  lr_lora: 2.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 20
+  eval_every: 3672
+  save_every: 3672

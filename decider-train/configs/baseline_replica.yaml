@@ -1,0 +1,60 @@
+# baseline_replica: coin-by-coin rebuild of avbiswas/bev-decider-0.4B as train.py would train it.
+#
+# Every number below is read from the published artefacts, not guessed: 20-layer Qwen3Model
+# backbone, LoRA r=8 alpha=16 attention-only on the last 12 kept layers (48 modules, 983,040
+# trainable parameters), DecisionHeadV1 (7,364,608 parameters). scripts/paramcount.py verifies the
+# totals sum to the published 477,566,976. No context head, no rank embedding, no label smoothing,
+# no option-order shuffling -- bev-train's recipe trains with option order fixed, and arcs off
+# features that do not exist in bev-decider.
+#
+# Budget: 14,688 steps x 64 presentations = 940,032 -- the same presentation count as the v2 arm,
+# so the two arms are comparable by construction.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  last_k_layers: 12
+  include_mlp: 0
+
+head:
+  type: v1
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+
+loss:
+  label_smoothing: 0.0
+  emd_lambda: 0.0
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 0
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 2
+  max_steps: 14688
+  epochs: 2
+  lr_lora: 1.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 20
+  eval_every: 3672
+  save_every: 3672

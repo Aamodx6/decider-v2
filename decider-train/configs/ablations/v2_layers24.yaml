@@ -1,0 +1,55 @@
+# Tier-2 ablation: depth 24 instead of 20.
+#
+# One change vs configs/baseline_replica.yaml — num_layers 20 -> 24 (+62,923,776 parameters,
+# 533,126,144 total measured by scripts/paramcount.py). The reference target is unknown; bev's
+# LoRA indices are absolute, so extending depth SHIFTS what "last 12 layers" means — that is a
+# finding to carry in the write-up, not a defect in the ablation.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 24
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.0
+  last_k_layers: 12
+  include_mlp: 0
+
+head:
+  type: v1
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+
+loss:
+  label_smoothing: 0.0
+  emd_lambda: 0.0
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 0
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 2
+  max_steps: 14688
+  epochs: 2
+  lr_lora: 1.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 20
+  eval_every: 3672
+  save_every: 3672

@@ -1,0 +1,65 @@
+# decider_v2: the Tier-1 recipe under test -- baseline vocabulary + the three measured additions.
+#
+# Head v2: perceiver-style context summariser (n_ctx learned query tokens) plus the rank embedding
+# that travels with the level rather than the list slot. LoRA widened to r=16 alpha=32 on all 20
+# kept layers, attention + MLP. Loss: label smoothing renormalised over the valid options (0.05)
+# and the EMD term (0.5) against label_probs where the dataset carries them. Options are shuffled
+# per epoch, which the order-invariance gate (tests/test_core.py (b)) performs.
+#
+# Budget identical to baseline_replica.yaml: 14,688 steps x 64 presentations = 940,032, so the
+# paired arms differ only in recipe, not in budget or seed.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  last_k_layers: 20
+  include_mlp: 1
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+  use_derived: 0
+  derived_dropout: 0.15
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 8
+
+optim:
+  batch_size: 32
+  grad_accum_steps: 2
+  max_steps: 14688
+  epochs: 2
+  lr_lora: 2.0e-04
+  lr_head: 1.0e-03
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  grad_clip: 1.0
+
+logging:
+  log_every: 20
+  eval_every: 3672
+  save_every: 3672
