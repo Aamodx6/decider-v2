@@ -1,0 +1,20 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+build/
+
+# data and artifacts (never in version control)
+data/
+outputs/
+checkpoints/
+*.parquet
+*.safetensors
+
+# notebook run state (SMOKE and real runs each keep one)
+decider_v2_state*.json
+
+# pristine upstream clones, local env files
+ref/
+.env

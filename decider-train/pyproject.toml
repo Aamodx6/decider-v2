@@ -1,0 +1,51 @@
+[project]
+name = "decider-train"
+version = "0.1.0"
+description = "Training, evaluation and calibration pipeline for the decider-v2 study (bev-train style)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Exact pins: every number in docs/LOCAL_VERIFICATION.md and docs/ARCH_REVIEW.md was produced
+    # with these. train.py --env_check verifies them (via logger.py, which parses the generated
+    # requirements.txt) and aborts on mismatch, because a silently-upgraded transformers changes
+    # the 4-D attention-mask path this project depends on.
+    #
+    # Compatibility constraints checked against PyPI metadata rather than assumed:
+    #   transformers 5.15.0  requires huggingface-hub >=1.5.0,<2.0 and tokenizers >=0.22.0,<=0.23.0.
+    #                         huggingface-hub is now at 2.x on PyPI, so the 1.33.0 pin is load-bearing:
+    #                         an unpinned install resolves to 2.x and transformers will not import.
+    #                         tokenizers 0.23.0 does not exist; 0.22.2 is the newest that does.
+    #   numpy 2.3.5          requires Python >=3.11.
+    #   pyarrow 25.0.1       required by datasets 5.1.0 (>=24.0.0); ships cp312 wheels.
+    #   safetensors/tokenizers are abi3 or pure-python wheels, so they are not Python-version bound.
+    # torch is deliberately NOT here: the SageMaker container (pytorch 2.7.1 / py312) owns the
+    # CUDA-matched build, and pip-installing torch over it is how you end up with a CPU-only torch
+    # on a GPU instance.
+    "transformers==5.15.0",
+    "peft==0.21.2",
+    "datasets==5.1.0",
+    "huggingface_hub==1.33.0",
+    "tokenizers==0.22.2",
+    "safetensors==0.8.0",
+    "accelerate==1.15.0",
+    "numpy==2.3.5",
+    "pyarrow==25.0.1",
+    "pyyaml>=6.0.1",
+]
+
+[project.optional-dependencies]
+# Tier-2 DERIVED pre-pass (normalize.py): --use_derived 1 needs these; everything else runs without.
+derived = [
+    "dateparser>=1.2.0",
+    "pint>=0.24",
+]
+# scripts/bench.py throughput probe extras: none beyond the base set (torch from the container).
+bench = []
+dev = [
+    "matplotlib>=3.10",
+    "pytest>=8.0",
+    "nbformat>=5.10",
+]
+
+[tool.uv]
+# Nothing special: uv lock / uv sync / uv export are used to produce uv.lock and requirements.txt.
