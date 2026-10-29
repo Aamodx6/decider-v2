@@ -26,7 +26,7 @@ head:
   use_null: 0
 
 loss:
-  label_smoothing: 0.08
+  label_smoothing: 0.10
   emd_lambda: 0.5
 
 data:
