@@ -305,6 +305,110 @@ class DecisionHeadV2(nn.Module):
         return logits.masked_fill(opt_pad, -float("inf"))
 
 
+# --------------------------------------------------------------------------- head v3 (contrastive + swiglu + rmsnorm)
+class SwiGLU(nn.Module):
+    def __init__(self, dim, hidden_dim):
+        super().__init__()
+        self.w_gate = nn.Linear(dim, hidden_dim, bias=False)
+        self.w_up = nn.Linear(dim, hidden_dim, bias=False)
+        self.w_down = nn.Linear(hidden_dim, dim, bias=False)
+        self.act = nn.SiLU()
+
+    def forward(self, x):
+        return self.w_down(self.act(self.w_gate(x)) * self.w_up(x))
+
+
+class HeadBlockV3(nn.Module):
+    """Option self-attn -> cross-attn to context -> SwiGLU FFN with RMSNorm."""
+
+    def __init__(self, d, h, dropout=0.0):
+        super().__init__()
+        norm_cls = getattr(nn, "RMSNorm", nn.LayerNorm)
+        self.n1 = norm_cls(d)
+        self.sa = nn.MultiheadAttention(d, h, dropout=dropout, batch_first=True)
+        self.n2 = norm_cls(d)
+        self.ca = nn.MultiheadAttention(d, h, dropout=dropout, batch_first=True)
+        self.n3 = norm_cls(d)
+        self.ff = SwiGLU(d, int(2.67 * d))
+
+    def forward(self, x, ctx, opt_pad):
+        h = self.n1(x)
+        x = x + self.sa(h, h, h, key_padding_mask=opt_pad, need_weights=False)[0]
+        if ctx is not None:
+            h = self.n2(x)
+            x = x + self.ca(h, ctx, ctx, need_weights=False)[0]
+        return x + self.ff(self.n3(x))
+
+
+class DecisionHeadV3(nn.Module):
+    """DecisionHeadV3:
+    1. SwiGLU + RMSNorm interaction blocks.
+    2. Relative Contrastive Differential: scores options relative to candidate centroid x - mean(x).
+    3. Learnable per-task temperature scaling for probability calibration.
+    4. Choice-order invariant by construction.
+    """
+
+    def __init__(self, d_model=1024, d=512, h=8, num_layers=2, n_ctx=8,
+                 num_task_types=NUM_TASK_TYPES, use_null=False, use_ctx=True, use_rank=True,
+                 dropout=0.0):
+        super().__init__()
+        self.d = d
+        self.use_ctx = use_ctx
+        self.use_rank = use_rank
+        self.use_null = use_null
+        self.proj_opt = nn.Linear(d_model, d)
+        self.type_emb = nn.Embedding(num_task_types, d)
+        if use_ctx:
+            self.proj_ctx = nn.Linear(d_model, d)
+            self.ctx_q = nn.Parameter(torch.randn(n_ctx, d) * 0.02)
+            self.ctx_attn = nn.MultiheadAttention(d, h, dropout=dropout, batch_first=True)
+        if use_rank:
+            self.rank_mlp = nn.Sequential(nn.Linear(1, d), nn.GELU(), nn.Linear(d, d))
+        if use_null:
+            self.null_opt = nn.Parameter(torch.zeros(d))
+        self.blocks = nn.ModuleList([HeadBlockV3(d, h, dropout) for _ in range(num_layers)])
+        norm_cls = getattr(nn, "RMSNorm", nn.LayerNorm)
+        self.out_scorer = nn.Sequential(
+            norm_cls(2 * d),
+            nn.Linear(2 * d, d),
+            nn.SiLU(),
+            nn.Linear(d, 1)
+        )
+        self.log_temp = nn.Parameter(torch.zeros(num_task_types))
+
+    def context_summary(self, prefix_h, prefix_pad):
+        if not self.use_ctx or prefix_h is None:
+            return None
+        c = self.proj_ctx(prefix_h)
+        ctx, _ = self.ctx_attn(self.ctx_q.unsqueeze(0).expand(c.shape[0], -1, -1), c, c,
+                               key_padding_mask=prefix_pad, need_weights=False)
+        return ctx
+
+    def forward(self, option_h, prefix_h=None, prefix_pad=None, option_mask=None, task_type=None,
+                ranks=None, **kw):
+        B, K, _ = option_h.shape
+        x = self.proj_opt(option_h) + self.type_emb(task_type)[:, None, :]
+        if self.use_rank and ranks is not None:
+            x = x + self.rank_mlp(pad_ranks(option_mask, ranks).unsqueeze(-1))
+        opt_pad = ~option_mask
+        if self.use_null:
+            null = self.null_opt.to(x.dtype).expand(B, 1, -1)
+            x = torch.cat([null, x], dim=1)
+            opt_pad = torch.cat([torch.zeros(B, 1, dtype=torch.bool, device=x.device), opt_pad], dim=1)
+        ctx = self.context_summary(prefix_h, prefix_pad)
+        for blk in self.blocks:
+            x = blk(x, ctx, opt_pad)
+        # Relative contrastive delta
+        mask_f = option_mask.unsqueeze(-1).float()
+        mean_opt = (x * mask_f).sum(dim=1, keepdim=True) / mask_f.sum(dim=1, keepdim=True).clamp(min=1.0)
+        x_rel = x - mean_opt
+        fused = torch.cat([x, x_rel], dim=-1)
+        raw_logits = self.out_scorer(fused).squeeze(-1)
+        temp = torch.exp(self.log_temp[task_type]).unsqueeze(-1).clamp(0.1, 5.0)
+        logits = raw_logits / temp
+        return logits.masked_fill(opt_pad, -float("inf"))
+
+
 # --------------------------------------------------------------------------- network
 class DeciderV2(nn.Module):
     def __init__(self, backbone, head, pool=POOL_BEV):
@@ -368,6 +472,12 @@ def build_model(args):
     if head_name == "v1":
         head = DecisionHeadV1(hidden_dim=d_model, new_dim=g(args, "head_new_dim", 512),
                               num_layers=g(args, "head_layers", 2), **common)
+    elif head_name == "v3":
+        head = DecisionHeadV3(
+            d_model=d_model, d=g(args, "head_new_dim", 512), h=g(args, "head_heads", 8),
+            num_layers=g(args, "head_layers", 2), n_ctx=g(args, "n_ctx", 8),
+            use_null=g(args, "use_null", False), use_ctx=g(args, "use_ctx", True),
+            use_rank=g(args, "use_rank", True), dropout=g(args, "head_dropout", 0.0), **common)
     else:
         head = DecisionHeadV2(
             d_model=d_model, d=g(args, "head_new_dim", 512), h=g(args, "head_heads", 8),

@@ -1,0 +1,42 @@
+# decider_v3: next-generation decision architecture
+# Head v3: Relative contrastive option differential (x - mean_opt) + SwiGLU FFN + RMSNorm
+# + learnable temperature scaling per task type.
+#
+# Choice-order invariant by construction.
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 20
+  random_init: 0
+  attn_implementation: sdpa
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  last_k_layers: 20
+  include_mlp: 1
+
+head:
+  type: v3
+  new_dim: 512
+  layers: 2
+  heads: 8
+  dropout: 0.0
+  n_ctx: 8
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 8

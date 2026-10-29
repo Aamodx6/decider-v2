@@ -1,0 +1,2 @@
+timestamp	commit	val_loss	val_acc	val_ece	order_invariance_dp	status	description
+2026-10-30T01:00:00Z	63a4a99	0.4517	0.7470	0.0650	5.96e-08	keep	baseline_v2: 20-layer truncated backbone, head=v2 Perceiver context
