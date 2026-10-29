@@ -13,3 +13,4 @@ timestamp	commit	val_loss	val_acc	val_ece	order_invariance_dp	status	description
 2026-10-29T20:23:30.486927+00:00	db7a9c0	1.5030	0.3125	0.2323	3.28e-07	discard	Tuned head learning rate lr_head=0.0005 to reduce overconfidence (loss did not improve)
 2026-10-29T20:25:21.011682+00:00	db7a9c0	1.4113	0.3438	0.2808	2.68e-07	keep	Increase training label smoothing from 0.05 to 0.08 to penalize overconfidence
 2026-10-29T20:27:09.263808+00:00	45a62f3	1.3752	0.3438	0.3062	3.28e-07	keep	Test label smoothing 0.10 to explore calibration frontier
+2026-10-29T20:28:56.185300+00:00	dcad64c	1.3519	0.3438	0.2633	3.28e-07	keep	Test label smoothing 0.12 to probe beyond optimal calibration point
