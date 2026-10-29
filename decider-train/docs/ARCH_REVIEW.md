@@ -4,8 +4,8 @@ Every claim below is backed by a file and line in something I read or ran. Sourc
 
 | ref | what it is |
 |---|---|
-| `ref/bev-train/` | `avbiswas/bev-train` @ `a58c551`, the open training code for bev-decider |
-| `ref/bev-decider/` | `avbiswas/bev-decider` @ `main`, the open Apache-2.0 inference package |
+| `ref/bev-train/` | `bev-train` @ `a58c551`, the open training code for bev-decider |
+| `ref/bev-decider/` | `bev-decider` @ `main`, the open Apache-2.0 inference package |
 | `ref/hf/bev-decider-config.json` | the published checkpoint's own `config.json` |
 | `ref/hf/bev-decider-backbone_config.json` | the published checkpoint's 20-layer Qwen3 config |
 | `ref/hf/bev-decider-README.md` | the model card (published benchmark numbers) |
@@ -47,7 +47,7 @@ Verified by count (`paramcount.py`, real Qwen3-0.6B shapes):
 | **total** | **470,202,368** | 533,126,144 |
 
 470,202,368 is **exactly** the `BF16` tensor count the HF safetensors index reports for
-`avbiswas/bev-decider-0.4B`. The replica is structurally identical.
+`bev-decider-0.4B`. The replica is structurally identical.
 
 ### 1.2 LoRA
 
@@ -249,7 +249,7 @@ two options `["No","Yes"]` at training, `["No: …","Yes: …"]` at inference wh
 (§1.7). `score`: options are `f"{i}: {level}"`, so the ordinal index lives in the text, and the answer
 is `Σ i·p_i` over the softmax (§1.7). No special tokens, no embedding resize.
 
-**Q2. Is `avbiswas/bev-decision` usable for your intended licence?**
+**Q2. Is `bev-decision` usable for your intended licence?**
 **No blanket licence is asserted.** Hub metadata is `license: unknown`, and the card says so
 explicitly: "No single blanket license is asserted for this mixed-source release … Consult the linked
 upstream sources … before public redistribution or commercial use", naming ProofWriter's
@@ -259,7 +259,7 @@ CC BY 4.0, CLINC150 CC BY 3.0, 2WikiMultihopQA + CondaQA Apache-2.0, Decider-gen
 Apache-2.0, FinQA + PRM800K MIT, TimeQA BSD-3-Clause (but Wikipedia text CC BY-SA). The card also
 says "No non-commercial source was added" — which is a statement about the batches it added, not
 about the whole mixture, and it is in tension with "license: unknown" and the redistribution
-caveats. `avbiswas/bev-decider-0.4B` itself is **CC-BY-NC-4.0**.
+caveats. `bev-decider-0.4B` itself is **CC-BY-NC-4.0**.
 → **Commercial release of a model trained on this mixture is not cleared.** Treat the weights as
 research-only until each upstream is audited individually. This does not block the experiments.
 
@@ -287,11 +287,11 @@ inference is the laptop case. Both are supported by this build.
 
 | arch.md §5.2 | "bev-decider's exact pooling is not documented; ablate `<opt_end>` vs mean-pool" | **WRONG (as a description).** It *is* documented, in `bev-decider/src/bev_decider/encode.py:97` and `bev-train/tokenization.py:136-138`: last content token, with `<option>`/`</option>` as ordinary text. Neither `<opt_end>` nor mean pooling is what the reference does. Both remain legitimate *ablations*; neither is a reproduction of bev. |
 | arch.md §5.3 | "bev may implement `noul` differently; this is a deliberate v2 choice" | **CONFIRMED, and the situation is the reverse.** bev *does* implement `noul` as a 2-option choice. The real difference is the criteria text (train `["No","Yes"]` vs serve `["No: …","Yes: …"]`) — a bug-shaped inconsistency, not a design choice. |
-| arch.md header | "confirm [assumptions] against `src/bev_decider`" | **There is no `src/bev_decider` in bev-train.** bev-train is flat (`tokenization.py`, `dataset.py`, `network.py`, `train.py`, `logger.py`, `inference.py`, `arch.ipynb`). `src/bev_decider/` is the *separate* `avbiswas/bev-decider` inference repo, which I cloned to `ref/bev-decider`. arch.md conflated two repos. |
+| arch.md header | "confirm [assumptions] against `src/bev_decider`" | **There is no `src/bev_decider` in bev-train.** bev-train is flat (`tokenization.py`, `dataset.py`, `network.py`, `train.py`, `logger.py`, `inference.py`, `arch.ipynb`). `src/bev_decider/` is the *separate* `bev-decider` inference repo, which I cloned to `ref/bev-decider`. arch.md conflated two repos. |
 | arch.md §2 | "≈0.4B (0.31B layers + 0.16B embeddings + head)" | **CONFIRMED and now exact**: 314,619,904 + 155,582,464 + 7,364,608 (+ 1,024 norm) = 477,566,976. |
 | arch.md §2 | "CE on ~940K typed questions, 12k steps, batch 64" | **PARTIALLY CONFIRMED.** 12k steps × batch 64 = 768k presentations ≠ ~940k questions. The recipe is confirmed from `configs/full_lora_k12.yaml`; the data volume is not reproducible from public data. **CANNOT VERIFY.** |
 | arch.md §2 | "Trained to 1,024-token states; default limit 2,048" | **CONFIRMED.** `max_state_tokens_train: 1024`, `max_state_tokens: 2048` in the published `config.json`. |
-| arch.md §2 | "Weights CC-BY-NC-4.0 (NC training data); code Apache-2.0" | **CONFIRMED.** `avbiswas/bev-decider-0.4B` → `cc-by-nc-4.0`; `avbiswas/bev-decider` → Apache-2.0. Note bev-train itself declares **no licence** (no `LICENSE` file, no `license` key in `pyproject.toml`) — so "code is Apache-2.0" is true of the inference package, not of the training code. |
+| arch.md §2 | "Weights CC-BY-NC-4.0 (NC training data); code Apache-2.0" | **CONFIRMED.** `bev-decider-0.4B` → `cc-by-nc-4.0`; `bev-decider` → Apache-2.0. Note bev-train itself declares **no licence** (no `LICENSE` file, no `license` key in `pyproject.toml`) — so "code is Apache-2.0" is true of the inference package, not of the training code. |
 | arch.md §2 | "Reported … Held-out 74.7, JevBench 65.8/46.8, sysone-bench 70.8, ECE 0.065" | **CONFIRMED as published claims** (`ref/hf/bev-decider-README.md`). I reproduced the held-out number: see §5. |
 
 ### 3.2 The Gap → change map (arch.md §3)
@@ -406,7 +406,7 @@ produced a plausible-looking, completely wrong model. The collate now converts t
 | 2-layer random-init, `special` mode, `opt_end` pooling | 5.96e-08 | 4 × 8 |
 | same, `score` questions, K = 3 / 5 / 7 | 5.96e-08 / 4.47e-08 / 4.47e-08 | 8 each |
 | **trained** 2-layer v2, real data | 8.94e-08 | 24 × 8 |
-| **published `avbiswas/bev-decider-0.4B`, 20 layers** | **3.16e-06** (default-config test), **3.70e-06** (`all`) | 24 × 8 |
+| **published `bev-decider-0.4B`, 20 layers** | **3.16e-06** (default-config test), **3.70e-06** (`all`) | 24 × 8 |
 
 The reference's own Δ is ~3e-6, i.e. two to three orders of magnitude above the 2-layer numbers but
 still inside the model card's "no probability moved by more than 1e-5" claim. This is fp32
@@ -459,7 +459,7 @@ the pre-pass is Tier 2 behind a flag rather than baked in.
 
 ## 5. Weak spots of bev-decider, measured on the data
 
-Both runs use `decider_v2/evaluate.py --reference avbiswas/bev-decider-0.4B`, i.e. my own encoder,
+Both runs use `decider_v2/evaluate.py --reference bev-decider-0.4B`, i.e. my own encoder,
 collate and metrics code against the published weights. That is a pipeline-fidelity check as much as
 a model check.
 
@@ -654,7 +654,7 @@ stays usable. See `LOCAL_VERIFICATION.md` for the throughput measurements.
 |---|---|---|---|
 | **sysone-bench** v2.1.0 | **YES** — `instax-dutta/sysone-bench` @ `main`, `datasets/v2/manifest.v2.1.0.jsonl`, **1,190 cases** (952 evaluation + 238 calibration) = **1,240 evaluation decisions**, with `state`, `questions` (Jev-format, with `criteria` and `labels`), `expected`, `suite_id`, `provenance_id`, `split`. 0.90 MB, MIT licence. | **YES** — `run.py`, `benchmark/{orchestrator,metrics,scoring,canonical,report}.py`, `runners/`. There is a vendor adapter per family (`runners/vendor/*.py`). | **AVAILABLE, adapter written.** `decider_v2/bench/run_sysone_bench.py` drives it and is graded by sysone-bench's own `contracts.validate_answers` + `metrics.summarize_predictions` — the metric is never re-implemented. The contract (`{state, questions}` in, `{qid: answer}` out, `noul` → `{"type","noul"}`, `choice` → `{"type","choice","choice","probabilities"}`, `score` → `{"type","score","score","probabilities"}`) is already what `decider_v2` produces. |
 | **JevBench** | **YES** — `fstandhartinger/jevbench`, `datasets/public/{easy,hard,original}.jsonl` = **48 + 111 + 72 = 231 tasks**, MIT. Each line: `{id, state, question{type,instructions,criteria}, labels, expected, family, group, provenance}`. `easy` = the 48 "easy" tier, `original` = the 72 "standard" tier, `hard` = the 111 hard tier — the same 48/72/111 split the model card reports. | **YES** — `jevbench/{tasks,scoring,metrics,composite,composite_v14}.py`, CLI, and adapters (there is already an `adapters/so1_decider.py`, whose shape `decider_v2/bench/run_jevbench.py` follows). | **AVAILABLE, adapter written.** `decider_v2/bench/run_jevbench.py` drives it and is graded by jevbench's own `scoring.score_task` + `summarize.metric`. |
-| Hugging Face | `avbiswas/jevbench`, `jevbench`, `instax-dutta/sysone-bench`, `sysone-bench` | — | **NOT FOUND** as datasets; both live on GitHub only. |
+| Hugging Face | `jevbench`, `jevbench`, `instax-dutta/sysone-bench`, `sysone-bench` | — | **NOT FOUND** as datasets; both live on GitHub only. |
 
 **Both adapters are now written and run** (`decider_v2/bench/`, patterned on
 `jevbench/adapters/so1_decider.py`: load the model once, one forward pass per question, hand the

@@ -40,7 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-10-20
 
 ### Added
-- Flat repository restructuring into `decider-train/` in the style of `avbiswas/bev-train`.
+- Flat repository restructuring into `decider-train/`.
 - Packaging for Python 3.12 and PyTorch 2.7.1 container parity.
 - Configuration ladder: `smoke.yaml`, `baseline_replica.yaml`, `decider_v2.yaml`, and 5 Tier-2 ablations.
 - Core structural gate tests (`tests/test_core.py`) and numerical parity check (`tests/golden_check.py`).

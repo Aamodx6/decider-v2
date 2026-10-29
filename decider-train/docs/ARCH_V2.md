@@ -17,7 +17,7 @@ Two sentences of context, because they change how the results table should be re
   `default`, which the 4,000-question measurement disproved (`ARCH_REVIEW.md` §5.4). The real run
   does not rely on the caution at all — it evaluates the **full 80,019-question test split**, where
   the interval is ±0.30 points, and runs two seeds per arm.
-* `avbiswas/bev-decision('all')` has **no licence** (`license: unknown`, and the card says so in
+* `bev-decision('all')` has **no licence** (`license: unknown`, and the card says so in
   those words). Weights trained on it are research-only until every upstream is audited. That does
   not block the experiments and does not affect any number below.
 
@@ -318,7 +318,7 @@ points, so this is not a formality — `ARCH_REVIEW.md` §5.4.)
 
 | # | what | output |
 |---|---|---|
-| 1 | reference `avbiswas/bev-decider-0.4B` on our `test` | the number to beat, on our split |
+| 1 | reference `bev-decider-0.4B` on our `test` | the number to beat, on our split |
 | 2 | reference on a 5,000-question sample of the **`default`** config test | validates my encoder against the published 74.7; the two configs turn out to be within ~1 point, so the published number is a fair target |
 | 3 | baseline replica, one job per seed | identical budget, identical data |
 | 4 | v2, one job per seed | identical budget, identical data |

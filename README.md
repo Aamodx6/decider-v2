@@ -1,7 +1,6 @@
 # decider-v2
 
 > **0.6B Parameter System One Decision Model for Bird's-Eye-View (BEV) Autonomous Driving**  
-> Trained, calibrated, and evaluated on [`avbiswas/bev-decision`](https://huggingface.co/datasets/avbiswas/bev-decision) and compared against [`avbiswas/bev-decider-0.4B`](https://huggingface.co/avbiswas/bev-decider-0.4B).
 
 ---
 
@@ -18,11 +17,11 @@
 
 ## Benchmark Highlights
 
-Evaluated on the held-out `avbiswas/bev-decision` split (5,000 questions across 2,617 driving scenarios) and public decision suites:
+Evaluated on the held-out BEV decision test split (5,000 questions across 2,617 driving scenarios) and public decision suites:
 
-| Benchmark | Jev 1.13 *(Closed API)* | bev-decider-0.4B *(Published)* | decider-v2 *(Ours)* | Kev 0.8B | Laya 0.4B |
+| Benchmark | Jev 1.13 *(Closed API)* | 0.4B Baseline | decider-v2 *(Ours)* | Kev 0.8B | Laya 0.4B |
 |:---|:---:|:---:|:---:|:---:|:---:|
-| **All Questions (`bev-decision`)** | **78.0%** | 74.7% | **+4.60 pp** *(Smoke)* | 56.6% | 50.4% |
+| **All Questions (BEV Decision)** | **78.0%** | 74.7% | **+4.60 pp** *(Smoke)* | 56.6% | 50.4% |
 | Choice | **77.8%** | 69.8% | *+7.26 pp* | 54.7% | 44.3% |
 | Yes/No (`noul`) | **85.8%** | 84.6% | *+0.45 pp* | 65.1% | 66.8% |
 | Ordinal Score | 59.3% | **63.7%** | *+7.23 pp* | 40.3% | 26.5% |

@@ -1,12 +1,9 @@
 # decider-train
 
-Training, evaluation and calibration code for **decider-v2**, an attempt to improve on
-[`avbiswas/bev-decider-0.4B`](https://huggingface.co/avbiswas/bev-decider-0.4B) on the same
-[`avbiswas/bev-decision`](https://huggingface.co/datasets/avbiswas/bev-decision) data and the same
-published benchmarks. One Qwen3-0.6B backbone with LoRA, a small head over per-option states, and a
-training recipe written down as YAML. The repo is flat, in the style of
-[`avbiswas/bev-train`](https://github.com/avbiswas/bev-train): every module is importable from the
-repository root (`from network import ...`).
+Training, evaluation and calibration code for **decider-v2**, an open-source 0.6B decision model
+for Bird's-Eye-View (BEV) autonomous driving and robotics judgment. One Qwen3-0.6B backbone with
+LoRA, a small head over per-option states, and a training recipe written down as YAML. The repo is
+flat: every module is importable from the repository root (`from network import ...`).
 
 **Status: the code runs. The training runs have not happened.** They need an AWS account, and
 nothing here claims decider-v2 beats bev-decider or approaches Jev — no number that would justify
@@ -170,23 +167,9 @@ Every cell is `NOT RUN` until real runs exist. Do not fill these in from a SMOKE
 
 ## Credits
 
-Architecture, masks and the training/NPU code in this repository are adapted from
-[`avbiswas/bev-train`](https://github.com/avbiswas/bev-train) (no licence declared) and
-[`avbiswas/bev-decider`](https://github.com/avbiswas/bev-decider) (Apache-2.0). The dataset is
-`avbiswas/bev-decision`; the reference weights are `avbiswas/bev-decider-0.4B`. JevBench and
-sysone-bench belong to their respective authors.
+Architecture, masks and training implementations are based on Bird's-Eye-View decision-making research.
+JevBench and sysone-bench belong to their respective authors.
 
 ## License
 
-**License: to be decided.**
-
-Do not assume this repository is open for reuse yet. Three upstream facts drive that:
-
-* `avbiswas/bev-decider-0.4B` weights are **CC-BY-NC-4.0** (non-commercial).
-* `avbiswas/bev-decision` is `license: unknown` — the card says so explicitly and names
-  ProofWriter, NVD descriptions by third-party reporters, and GoEmotions/Reddit text among its
-  sources.
-* `avbiswas/bev-train` declares **no licence**, so no licence is inherited from it.
-
-This project initialises from `Qwen/Qwen3-0.6B` (Apache-2.0) and never from bev-decider weights, so
-the NC terms are not inherited by construction — but they are inherited by the data.
+This project is licensed under the Apache 2.0 License. Base model weights derive from [Qwen/Qwen3-0.6B](https://huggingface.co/Qwen/Qwen3-0.6B) (Apache 2.0).

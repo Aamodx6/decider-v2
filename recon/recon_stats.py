@@ -14,7 +14,7 @@ def rule(t):
     print("\n" + "=" * 78 + f"\n{t}\n" + "=" * 78)
 
 
-ds = load_dataset("avbiswas/bev-decision", "all", cache_dir=CACHE)
+ds = load_dataset("bev-decision", "all", cache_dir=CACHE)
 
 rule("A. DOMAIN TABLE (complete)")
 domain_rows, domain_q = Counter(), Counter()
@@ -144,7 +144,7 @@ for url in [
     "https://api.github.com/search/repositories?q=jevbench",
     "https://api.github.com/search/repositories?q=sysone-bench",
     "https://api.github.com/users/instax-dutta/repos?per_page=100",
-    "https://api.github.com/repos/avbiswas/bev-decider",
+    "https://api.github.com/repos/bev-decider",
 ]:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "recon"})

@@ -1,4 +1,4 @@
-"""Phase 0 recon: load avbiswas/bev-decision (config 'all') and print real statistics."""
+"""Phase 0 recon: load bev-decision (config 'all') and print real statistics."""
 import json
 import os
 import sys
@@ -34,15 +34,15 @@ if torch.cuda.is_available():
 print("transformers", transformers.__version__)
 print("datasets    ", hfds.__version__)
 
-rule("1. LOAD_DATASET('avbiswas/bev-decision', 'all')")
-ds = load_dataset("avbiswas/bev-decision", "all", cache_dir=CACHE)
+rule("1. LOAD_DATASET('bev-decision', 'all')")
+ds = load_dataset("bev-decision", "all", cache_dir=CACHE)
 print(ds)
 
 rule("1b. PER-FILE SIZES (config all = union of 5 batch dirs)")
 from huggingface_hub import HfApi
 
 api = HfApi()
-info = api.repo_info("avbiswas/bev-decision", repo_type="dataset", files_metadata=True)
+info = api.repo_info("bev-decision", repo_type="dataset", files_metadata=True)
 total = 0
 for s in info.siblings:
     if s.rfilename.endswith(".parquet"):
@@ -247,7 +247,7 @@ print("bev-train pyproject license field:", "license" in open(r"F:\Jev\ref\bev-t
 rule("9. BENCHMARK AVAILABILITY SEARCH")
 print("JevBench     : searching bev-train repo + dataset columns + HF ...")
 print("sysone-bench : searching bev-train repo + dataset columns + HF ...")
-for name in ["avbiswas/jevbench", "jevbench", "instax-dutta/sysone-bench", "sysone-bench"]:
+for name in ["/jevbench", "jevbench", "instax-dutta/sysone-bench", "sysone-bench"]:
     try:
         i = HfApi().repo_info(name, repo_type="dataset")
         print(f"  HF dataset {name}: FOUND")

@@ -24,7 +24,7 @@ from datasets import load_dataset
 
 from tokenization import TASK_NAMES, TASK_TYPES, build_batch, question_to_options
 
-DATASET_NAME = "avbiswas/bev-decision"
+DATASET_NAME = "bev-decision"
 DATASET_CONFIG = "all"
 
 

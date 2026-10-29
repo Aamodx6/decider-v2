@@ -121,7 +121,7 @@ def main():
     print(f"  v2                = backbone {bb:,} + lora {v2_lora:,} + "
           f"head_v2 {rows['head_v2_head v2 ctx+rank  d=512 L=2 n_ctx=8']['total']:,}"
           f"  -> {bb + v2_lora + rows['head_v2_head v2 ctx+rank  d=512 L=2 n_ctx=8']['total']:,}")
-    print(f"\n  published avbiswas/bev-decider-0.4B total (HF safetensors index): 477,566,976")
+    print(f"\n  published bev-decider-0.4B total (HF safetensors index): 477,566,976")
     print(f"  its fp32 head tensor count (HF index 'F32'):                     7,364,608")
     rows["totals"] = {
         "baseline_replica": bb + base_lora + rows["head_v1"]["total"],

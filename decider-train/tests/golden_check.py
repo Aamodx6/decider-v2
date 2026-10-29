@@ -12,7 +12,7 @@ and compares every logged step.
 The comparison covers, per step, the training loss, the gradient norm and the batch accuracy, plus
 the two validation evaluations.  Tolerance defaults to 1e-6.
 
-The reference data lives outside the package (it is a tiny carve of avbiswas/bev-decision, 124 KB,
+The reference data lives outside the package (it is a tiny carve of bev-decision, 124 KB,
 kept out of git).  If it is missing, regenerate it with:
 
     python dataset.py prepare --out ../decider_v2_work/golden/data --limit_train 24 --limit_val 8 ...

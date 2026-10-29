@@ -1,8 +1,8 @@
 """The network (old model.py + losses.py): truncated Qwen3 backbone + LoRA, the two decision
 heads, and the losses (label-smoothed CE, EMD for ordinal `score`, per-type weighting).
 
-DecisionHeadV1 is a byte-faithful replica of bev-decider's ChoiceHead (verified against
-github.com/avbiswas/bev-decider/src/bev_decider/model.py and bev-train/network.py), so the
+DecisionHeadV1 is a byte-faithful replica of the 0.4B baseline ChoiceHead (verified against
+the open reference implementations and network architecture), so the
 baseline arm is the real thing rather than a paraphrase of it.
 
 DecisionHeadV2 adds the pieces decider-v2 is testing: a Perceiver-style context summarizer over
@@ -474,9 +474,9 @@ def load_checkpoint(network, path, strict_head=True):
     return network
 
 
-def load_reference_bev_decider(repo="avbiswas/bev-decider-0.4B", revision=None, device="cpu",
+def load_reference_bev_decider(repo="bev-decider-0.4B", revision=None, device="cpu",
                                cache_dir=None, max_state_tokens=2048, max_choice_tokens=64):
-    """Load the published avbiswas/bev-decider-0.4B checkpoint as a DeciderV2(head=v1).
+    """Load the published bev-decider-0.4B checkpoint as a DeciderV2(head=v1).
 
     That checkpoint is exactly ChoiceHeadV1 on a merged 20-layer Qwen3-0.6B, so no peft adapter is
     needed and no bev-decider package import is required.

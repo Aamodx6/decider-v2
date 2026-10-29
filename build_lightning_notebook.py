@@ -276,7 +276,7 @@ else:
 
 # ------------------------------------------------------------------ 3 data
 md("3. Load the dataset and carve the splits",
-   "`load_dataset('avbiswas/bev-decision', 'all')`, both splits, no subsampling outside SMOKE mode. "
+   "`load_dataset('bev-decision', 'all')`, both splits, no subsampling outside SMOKE mode. "
    "The published `test` split is **never** touched by training, early stopping or calibration. "
    "`calib` and `val` are carved out of `train` **before** training, stratified by question type × "
    "domain. The parity cell prints the measured state overlap so you can see it is 0.\n\n"
@@ -709,9 +709,9 @@ md("7b. Reference checkpoint (optional)",
    "test file -- skip it if you only care about v2 vs baseline.")
 
 code("7b-reference", '''
-print("downloading avbiswas/bev-decider-0.4B (public; set HF_TOKEN if you hit a rate limit) ...")
+print("downloading bev-decider-0.4B (public; set HF_TOKEN if you hit a rate limit) ...")
 subprocess.check_call([LOCAL_PY, os.path.join(SRC_DIR, "evaluate.py"),
-                       "--reference", "avbiswas/bev-decider-0.4B",
+                       "--reference", "bev-decider-0.4B",
                        "--test_channel", os.path.join(DATA, "test"),
                        "--calib_channel", os.path.join(DATA, "calib"),
                        "--out", EVAL, "--batch_size", "8",

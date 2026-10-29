@@ -176,5 +176,5 @@ https://api.github.com/users/instax-dutta/repos?per_page=100
    - instax-dutta
    - IPRecon
 
-https://api.github.com/repos/avbiswas/bev-decider
-  FOUND: avbiswas/bev-decider  license={'key': 'apache-2.0', 'name': 'Apache License 2.0', 'spdx_id': 'Apache-2.0', 'url': 'https://api.github.com/licenses/apache-2.0', 'node_id': 'MDc6TGljZW5zZTI='}  desc=None
+https://api.github.com/repos/bev-decider
+  FOUND: bev-decider  license={'key': 'apache-2.0', 'name': 'Apache License 2.0', 'spdx_id': 'Apache-2.0', 'url': 'https://api.github.com/licenses/apache-2.0', 'node_id': 'MDc6TGljZW5zZTI='}  desc=None

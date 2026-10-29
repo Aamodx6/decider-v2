@@ -67,12 +67,12 @@ tags:
 - qwen3
 pipeline_tag: text-classification
 datasets:
-- avbiswas/bev-decision
+- bev-decision
 ---
 
 # {repo_id}
 
-**decider-v2** is a 0.6B parameter foundation model for Bird's-Eye-View (BEV) autonomous driving decision making, trained and calibrated on [`avbiswas/bev-decision`](https://huggingface.co/datasets/avbiswas/bev-decision).
+**decider-v2** is a 0.6B parameter foundation model for Bird's-Eye-View (BEV) autonomous driving decision making, trained and calibrated on Bird's-Eye-View (BEV) decision datasets.
 
 ## Architecture Highlights
 - **Backbone**: Truncated `{backbone}` ({num_layers} layers) with LoRA rank {args.get('lora_r', 16)} fine-tuning.

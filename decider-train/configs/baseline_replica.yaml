@@ -1,4 +1,4 @@
-# baseline_replica: coin-by-coin rebuild of avbiswas/bev-decider-0.4B as train.py would train it.
+# baseline_replica: coin-by-coin rebuild of the 0.4B baseline as train.py would train it.
 #
 # Every number below is read from the published artefacts, not guessed: 20-layer Qwen3Model
 # backbone, LoRA r=8 alpha=16 attention-only on the last 12 kept layers (48 modules, 983,040

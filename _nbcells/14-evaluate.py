@@ -5,7 +5,7 @@
 # are all evaluate.py argparse names - env_check=1 so evaluate.py pins the container libraries
 # exactly like train.py does (transformers/peft are NOT preinstalled in the framework image).
 # Outputs land at S3_EVAL/<job>/output/data/<tag>.json and are pulled to runs/evals/<tag>.json.
-REFERENCE_ID = "avbiswas/bev-decider-0.4B"   # published v1 recipe, no fine-tune (the un-trained lamp)
+REFERENCE_ID = "bev-decider-0.4B"   # published v1 recipe, no fine-tune (the un-trained lamp)
 
 EVAL_FLAGS = ["checkpoint", "reference", "test_channel", "calib_channel", "out", "tag", "env_check",
               "limit", "batch_size", "invariance", "invariance_examples", "invariance_shuffles",

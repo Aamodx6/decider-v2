@@ -45,15 +45,15 @@ launched** and no cost was incurred.
 ```
 python recon/recon_dataset.py          -> recon/recon_out.txt
 python recon/recon_stats.py            -> recon/recon_stats_out.txt
-git clone https://github.com/avbiswas/bev-train      ref/bev-train
-git clone https://github.com/avbiswas/bev-decider    ref/bev-decider
+git clone https://github.com/bev-train      ref/bev-train
+git clone https://github.com/bev-decider    ref/bev-decider
 git clone https://github.com/instax-dutta/sysone-bench   ref/sysone-bench
 git clone https://github.com/fstandhartinger/jevbench    ref/jevbench
 ```
 
 Headline numbers, all from those files:
 
-* `avbiswas/bev-decision` config `all`: **231,332 train rows / 44,856 test rows**, 114.21 MiB of
+* `bev-decision` config `all`: **231,332 train rows / 44,856 test rows**, 114.21 MiB of
   parquet across 5 batch directories.
 * **502,570 typed questions**: choice 224,880 (44.75%), noul 208,677 (41.52%), score 69,013 (13.73%).
   422,551 of them are in train; **80,019** in test.
@@ -154,7 +154,7 @@ F:\Jev\.venv-gpu\Scripts\python.exe paramcount.py --qwen_config ref/hf/qwen3-0.6
   baseline replica  = backbone 470,202,368 + lora    983,040 + head_v1  7,364,608 -> 478,550,016
   v2                = backbone 470,202,368 + lora  7,208,960 + head_v2 10,779,137 -> 488,190,465
 
-  published avbiswas/bev-decider-0.4B total (HF safetensors index): 477,566,976
+  published bev-decider-0.4B total (HF safetensors index): 477,566,976
   its fp32 head tensor count (HF index 'F32'):                     7,364,608
 ```
 
@@ -291,13 +291,13 @@ dataloader workers, which is what a SageMaker job will actually see.
 
 ## 6. Reference checkpoint evaluation — ran, and it validates the whole encoder
 
-`evaluate.py --reference avbiswas/bev-decider-0.4B` uses *my* encoder, collate and metrics against
+`evaluate.py --reference bev-decider-0.4B` uses *my* encoder, collate and metrics against
 the published weights, so these two numbers check the implementation as much as the model.
 
 ### 6.1 On the `default` config's test split — the protocol the published 74.7 used
 
 ```
-F:\Jev\.venv-gpu\Scripts\python.exe evaluate.py --reference avbiswas/bev-decider-0.4B \
+F:\Jev\.venv-gpu\Scripts\python.exe evaluate.py --reference bev-decider-0.4B \
   --test_channel decider_v2_work/data/test_default --batch_size 8 \
   --invariance_examples 24 --invariance_shuffles 8 --tag reference_default
 ```
@@ -315,7 +315,7 @@ sampling: the card's exact 5,000-question draw is not published.
 ### 6.2 On the `all` config's test split — measured on 4,000 questions
 
 ```
-F:\Jev\.venv-gpu\Scripts\python.exe evaluate.py --reference avbiswas/bev-decider-0.4B \
+F:\Jev\.venv-gpu\Scripts\python.exe evaluate.py --reference bev-decider-0.4B \
   --test_channel decider_v2_work/data/test --calib_channel decider_v2_work/data/calib \
   --batch_size 8 --invariance_examples 24 --invariance_shuffles 8 --tag reference
 ```
