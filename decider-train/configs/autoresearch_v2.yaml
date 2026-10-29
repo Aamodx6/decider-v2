@@ -1,0 +1,54 @@
+# Autoresearch baseline: head=v2 on fast local benchmark
+seed: 0
+
+model:
+  backbone_name: Qwen/Qwen3-0.6B
+  num_layers: 2
+  random_init: 1
+  vocab_size: 151669
+  attn_implementation: sdpa
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.0
+  last_k_layers: 2
+  include_mlp: 1
+
+head:
+  type: v2
+  new_dim: 512
+  layers: 2
+  heads: 4
+  n_ctx: 4
+  use_ctx: 1
+  use_rank: 1
+  use_null: 0
+
+loss:
+  label_smoothing: 0.05
+  emd_lambda: 0.5
+
+data:
+  max_state_tokens: 1024
+  max_choice_tokens: 64
+  mode: bev
+  pool: bev
+  shuffle_options: 1
+  num_workers: 0
+
+optim:
+  batch_size: 4
+  grad_accum_steps: 2
+  max_steps: 20
+  epochs: 7
+  lr_lora: 0.0002
+  lr_head: 0.001
+  weight_decay: 0.01
+  warmup_ratio: 0.03
+  grad_clip: 1.0
+
+logging:
+  log_every: 1
+  eval_every: 10
+  save_every: 20

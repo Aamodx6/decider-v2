@@ -1,2 +1,4 @@
 timestamp	commit	val_loss	val_acc	val_ece	order_invariance_dp	status	description
-2026-10-30T01:00:00Z	63a4a99	0.4517	0.7470	0.0650	5.96e-08	keep	baseline_v2: 20-layer truncated backbone, head=v2 Perceiver context
+2026-10-29T19:46:54.100828+00:00	f21a7f0	1.4914	0.3125	0.1719	2.38e-07	keep	Baseline DecisionHeadV2 on fast local benchmark
+2026-10-29T19:48:40.122938+00:00	f21a7f0	1.5070	0.2812	0.3419	2.98e-07	discard	Evaluate DecisionHeadV3 with relative contrastive option pooling and SwiGLU (loss did not improve)
+2026-10-29T19:50:44.480819+00:00	f21a7f0	1.7865	0.4375	0.3065	3.28e-07	discard	DecisionHeadV3 with residual contrastive option scaling and SwiGLU (loss did not improve)

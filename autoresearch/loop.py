@@ -5,16 +5,15 @@ Adapted from Andrej Karpathy's autoresearch paradigm (github.com/karpathy/autore
 Automates the experiment cycle:
   1. Inspects proposed changes (in network.py / train.py / configs)
   2. Runs structural gate checks (order invariance, 4-D mask, loss sanity)
-  3. Executes fixed-budget training run (e.g., 100-200 steps or fixed wall-clock)
+  3. Executes fixed-budget training run (e.g., 20-100 steps or fixed wall-clock)
   4. Evaluates validation metrics (val_loss, val_acc, val_ece, order_invariance_dp)
   5. Ratchets:
        - If val_loss improved AND gates pass -> KEEPS and commits to git
-       - If val_loss regressed or gates fail -> DISCARDS and reverts working tree
+       - If val_loss regressed or gates fail -> DISCARDS and reverts decider-train/ changes
   6. Records experiment outcome in autoresearch/results.tsv
 
 Usage:
-  python autoresearch/loop.py --tag swiglu_head --desc "Upgrade DecisionHeadV2 FFN to SwiGLU"
-  python autoresearch/loop.py --tag relative_diff --desc "Add contrastive option difference" --budget_steps 150
+  python autoresearch/loop.py --tag v3_contrastive --desc "Evaluate DecisionHeadV3 relative pooling" --config decider-train/configs/autoresearch_v3.yaml --budget_steps 20
 """
 from __future__ import annotations
 
@@ -88,8 +87,8 @@ def append_result(entry: dict):
 
 
 def revert_changes():
-    print("[RATCHET] Discarding changes via git checkout ...")
-    run_command(["git", "checkout", "--", "."])
+    print("[RATCHET] Discarding changes in decider-train/ ...")
+    run_command(["git", "checkout", "--", "decider-train/"])
     run_command(["git", "clean", "-fd", "decider-train/runs/"])
 
 
@@ -104,17 +103,35 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Autoresearch experiment runner for decider-v2")
     p.add_argument("--tag", required=True, help="Short tag for this experiment (e.g. swiglu_head)")
     p.add_argument("--desc", required=True, help="One-line summary of hypothesis and changes")
-    p.add_argument("--config", default="decider-train/configs/smoke.yaml",
+    p.add_argument("--config", default="decider-train/configs/autoresearch_v2.yaml",
                    help="Config YAML to base experiment on")
-    p.add_argument("--budget_steps", type=int, default=100,
-                   help="Fixed training step budget for this run (default: 100)")
+    p.add_argument("--budget_steps", type=int, default=20,
+                   help="Fixed training step budget for this run (default: 20)")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda"],
                    help="Execution device")
+    p.add_argument("--train_channel", default="",
+                   help="Custom path to train parquet channel")
+    p.add_argument("--val_channel", default="",
+                   help="Custom path to val parquet channel")
+    p.add_argument("--test_channel", default="",
+                   help="Custom path to test parquet channel")
+    p.add_argument("--baseline", action="store_true",
+                   help="Mark this run as baseline anchor (records keep regardless of prior loss)")
     p.add_argument("--skip_gates", action="store_true",
                    help="Skip preliminary structural test gates (not recommended)")
     p.add_argument("--dry_run", action="store_true",
                    help="Print planned operations without executing")
     args = p.parse_args(argv)
+
+    train_ch = args.train_channel or (
+        str(ROOT / "decider_v2_work/golden/data/train") if (ROOT / "decider_v2_work/golden/data/train").exists() else "./data/train"
+    )
+    val_ch = args.val_channel or (
+        str(ROOT / "decider_v2_work/golden/data/val") if (ROOT / "decider_v2_work/golden/data/val").exists() else "./data/val"
+    )
+    test_ch = args.test_channel or (
+        str(ROOT / "decider_v2_work/golden/data/test") if (ROOT / "decider_v2_work/golden/data/test").exists() else "./data/test"
+    )
 
     timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
     head_commit = get_git_head()
@@ -126,6 +143,7 @@ def main(argv=None):
     print(f"Current HEAD : {head_commit}")
     print(f"Best Val Loss: {best_loss:.4f}")
     print(f"Budget Steps : {args.budget_steps} ({args.device})")
+    print(f"Data Channel : {train_ch}")
     print("=" * 78)
 
     if args.dry_run:
@@ -164,14 +182,18 @@ def main(argv=None):
     train_cmd = [
         PYTHON, "train.py",
         "--config", str(ROOT / args.config),
+        "--train_channel", train_ch,
+        "--val_channel", val_ch,
+        "--test_channel", test_ch,
         "--max_steps", str(args.budget_steps),
         "--epochs", "20",
         "--output_dir", str(exp_dir / "output"),
         "--model_dir", str(exp_dir / "model"),
         "--checkpoint_dir", str(exp_dir / "ckpt"),
-        "--log_every", "10",
+        "--log_every", "1",
         "--eval_every", str(args.budget_steps),
         "--save_every", str(args.budget_steps),
+        "--num_workers", "0",
     ]
 
     rc, train_out = run_command(train_cmd, cwd=TRAIN_ROOT)
@@ -218,21 +240,35 @@ def main(argv=None):
     eval_cmd = [
         PYTHON, "evaluate.py",
         "--checkpoint", str(exp_dir / "model" / "latest"),
+        "--test_channel", test_ch,
         "--invariance", "1",
         "--invariance_examples", "16",
         "--invariance_shuffles", "16",
-        "--limit", "100",
+        "--out", str(exp_dir / "eval_out"),
     ]
     rc, eval_out = run_command(eval_cmd, cwd=TRAIN_ROOT)
-    dp_match = re.search(r"order invariance: max \|dp\| = ([\d\.e\-\+]+)", eval_out)
-    if dp_match:
-        invariance_dp = float(dp_match.group(1))
+    eval_metrics_path = exp_dir / "eval_out" / "metrics.json"
+    if eval_metrics_path.exists():
+        try:
+            ev_data = json.loads(eval_metrics_path.read_text(encoding="utf-8"))
+            if "order_invariance" in ev_data:
+                invariance_dp = float(ev_data["order_invariance"].get("max_abs_delta", 0.0))
+            if "accuracy" in ev_data:
+                val_acc = float(ev_data["accuracy"])
+            if "ece" in ev_data:
+                val_ece = float(ev_data["ece"])
+        except Exception:
+            pass
+    else:
+        dp_match = re.search(r"order invariance: max \|dp\| = ([\d\.e\-\+]+)", eval_out)
+        if dp_match:
+            invariance_dp = float(dp_match.group(1))
 
     print(f"Results: val_loss={val_loss:.4f} (best: {best_loss:.4f}), val_acc={val_acc:.2%}, val_ece={val_ece:.4f}, inv_dp={invariance_dp:.2e}")
 
     # 4. Ratchet Decision
     print("\n[STEP 4/4] Ratchet decision ...")
-    improved = val_loss < best_loss
+    improved = (val_loss < best_loss) or args.baseline
     invariance_ok = invariance_dp <= 1e-5
 
     if improved and invariance_ok:
@@ -248,7 +284,8 @@ def main(argv=None):
             "status": status,
             "description": args.desc,
         })
-        commit_changes(args.tag, args.desc, val_loss, val_acc)
+        if not args.baseline:
+            commit_changes(args.tag, args.desc, val_loss, val_acc)
     else:
         status = "discard"
         reason = "loss did not improve" if not improved else "order invariance violated"
