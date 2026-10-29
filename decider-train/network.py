@@ -237,11 +237,12 @@ class HeadBlockV2(nn.Module):
 
     def __init__(self, d, h, dropout=0.0):
         super().__init__()
-        self.n1 = nn.LayerNorm(d)
+        norm_cls = getattr(nn, "RMSNorm", nn.LayerNorm)
+        self.n1 = norm_cls(d)
         self.sa = nn.MultiheadAttention(d, h, dropout=dropout, batch_first=True)
-        self.n2 = nn.LayerNorm(d)
+        self.n2 = norm_cls(d)
         self.ca = nn.MultiheadAttention(d, h, dropout=dropout, batch_first=True)
-        self.n3 = nn.LayerNorm(d)
+        self.n3 = norm_cls(d)
         self.ff = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(), nn.Linear(4 * d, d))
 
     def forward(self, x, ctx, opt_pad):
@@ -273,7 +274,8 @@ class DecisionHeadV2(nn.Module):
             self.null_opt = nn.Parameter(torch.zeros(d))
         self.blocks = nn.ModuleList([HeadBlockV2(d, h, dropout) for _ in range(num_layers)])
         self.rel_scale = nn.Parameter(torch.full((num_task_types,), 0.05))
-        self.out = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, 1))
+        norm_cls = getattr(nn, "RMSNorm", nn.LayerNorm)
+        self.out = nn.Sequential(norm_cls(d), nn.Linear(d, 1))
 
     def context_summary(self, prefix_h, prefix_pad):
         if not self.use_ctx:

@@ -7,3 +7,5 @@ timestamp	commit	val_loss	val_acc	val_ece	order_invariance_dp	status	description
 2026-10-29T20:03:08.838704+00:00	2163cc5	1.7203	0.4375	0.4230	2.38e-07	discard	HeadBlockV2 with SwiGLU FFN instead of standard GELU MLP (loss did not improve)
 2026-10-29T20:06:13.110779+00:00	2163cc5	1.4867	0.3438	0.1515	3.58e-07	keep	DecisionHeadV2 with relative contrastive option differential (rel_scale=0.05)
 2026-10-29T20:08:43.256042+00:00	043f7f0	1.4865	0.3438	0.1516	3.58e-07	keep	DecisionHeadV2 with per-task relative contrastive scaling
+2026-10-29T20:10:57.588149+00:00	8eea950	1.4911	0.3438	0.1512	4.17e-07	discard	Differentiated per-task relative scale initialization [0.06, 0.04, 0.04] (loss did not improve)
+2026-10-29T20:13:03.283049+00:00	8eea950	1.4863	0.3125	0.2054	2.68e-07	keep	DecisionHeadV2 with RMSNorm replacing LayerNorm in blocks and output projection
