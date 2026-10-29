@@ -1,4 +1,4 @@
-"""sysone-bench adapter for decider_v2.
+"""sysone-bench adapter for decider-train.
 
 Same shape as `run_jevbench.py` and the same rule: sysone-bench grades sysone-bench.  Its own
 `benchmark/contracts.validate_answers` decides whether an answer is legal, and its own
@@ -95,7 +95,7 @@ def run(runner, cases, limit_cases=0, progress_every=0):
 
     # Flatten to one row per (case, question) so the model sees uniform batches, then regroup.
     flat = [(case, q) for case in cases for q in case["questions"]]
-    print(f"running {len(flat)} decisions from {len(cases)} cases through decider_v2 ...", flush=True)
+    print(f"running {len(flat)} decisions from {len(cases)} cases through decider-train ...", flush=True)
     outs = runner.predict_questions([(c["state"], q) for c, q in flat],
                                     progress_every=progress_every)
 

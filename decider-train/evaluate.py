@@ -20,10 +20,10 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from data import DecisionDataset, collate, load_split_table
-from losses import expected_calibration_error
-from model import build_model, load_checkpoint, load_reference_bev_decider
-from serialize import TASK_NAMES, TASK_TYPES, Encoder, pad_ranks
+from dataset import DecisionDataset, collate, load_split_table
+from inference import apply_per_type_temperature, load_target
+from network import expected_calibration_error
+from tokenization import TASK_NAMES, Encoder
 
 
 # --------------------------------------------------------------------------- helpers
@@ -107,7 +107,7 @@ def evaluate_split(network, dataset, pad_id, device, amp_dtype, batch_size=8):
     C_max = 0
     done = 0
     total = len(loader)
-    t0 = time.time()
+    t0, printed = time.time(), 0
     for batch in loader:
         done += 1
         # Time-based, not every-N-batches. On CPU a batch can take tens of seconds, so a fixed
@@ -115,11 +115,15 @@ def evaluate_split(network, dataset, pad_id, device, amp_dtype, batch_size=8):
         # prints too often. A ~20 s interval is right for both.
         now = time.time()
         if done == 1 or done == total or (now - t0) >= 20:
-            rate = done / max(now - t0, 1e-9)
-            eta = (total - done) / rate if rate > 0 else float("nan")
+            # rate/eta are over the WINDOW since the last print (done - printed), never cumulative:
+            # done / window shrinks the eta toward zero as the run progresses and reports a 0.2 min
+            # eta with 167 batches left, which is worse than no progress line at all.
+            elapsed = now - t0
+            rate = (done - printed) / max(elapsed, 1e-9)
+            eta = (total - done) / rate if rate > 0 and elapsed > 1 else float("nan")
             print(f"  eval batch {done}/{total}  ({done * batch_size:,} questions)  "
                   f"{rate:.2f} batch/s  eta {eta / 60:.1f} min", flush=True)
-            t0 = now
+            t0, printed = now, done
         batch = to_device(batch, device)
         logits = forward(network, batch, device, amp_dtype)
         k = batch["option_mask"].sum(-1)
@@ -162,26 +166,23 @@ def evaluate_split(network, dataset, pad_id, device, amp_dtype, batch_size=8):
     }
 
 
+def fit_temperature(logits, labels, task_id, lo=0.05, hi=10.0, iters=200):
+    """Grid + golden-section on log T for one type (NLL is smooth and 1-D; this is exact enough).
+
+    One temperature per question type, fitted by minimising NLL on the calibration split (which is
+    carved out of TRAIN before training and never used for early stopping).  Reports ECE (10 bins,
+    top-label) before and after -- this is the old calibrate.py's estimator, absorbed here.
+    """
+    grid = torch.logspace(float(torch.log10(torch.tensor(lo))), float(torch.log10(torch.tensor(hi))), 60)
+    best_T, best_nll = 1.0, float("inf")
+    for T in grid:
+        nll = F.cross_entropy(logits / float(T), labels).item()
+        if nll < best_nll:
+            best_nll, best_T = nll, float(T)
+    return best_T, best_nll
+
+
 # --------------------------------------------------------------------------- main
-def load_target(src):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    from transformers import AutoTokenizer
-    if src.reference:
-        network, meta, snapshot = load_reference_bev_decider(src.reference, device=device)
-        tokenizer = AutoTokenizer.from_pretrained(snapshot)
-        encoder = Encoder(tokenizer, meta["resolved_max_state_tokens"],
-                          meta["resolved_max_choice_tokens"], mode="bev", pool="bev")
-        return network, tokenizer, encoder, device, {"reference": src.reference, **meta}
-    args = json.loads(open(os.path.join(src.checkpoint, "meta.json")).read())["args"]
-    network = build_model(argparse.Namespace(**args))
-    load_checkpoint(network, src.checkpoint)
-    network.to(device).eval()
-    tokenizer = AutoTokenizer.from_pretrained(args["backbone_name"])
-    encoder = Encoder(tokenizer, args["max_state_tokens"], args["max_choice_tokens"],
-                      mode=args.get("mode", "bev"), pool=args.get("pool", "bev"))
-    return network, tokenizer, encoder, device, {"checkpoint": src.checkpoint, "args": args}
-
-
 def main(argv=None):
     def _step(msg):
         # Every stage announces itself. This script has long silent stretches -- downloading a
@@ -212,8 +213,8 @@ def main(argv=None):
     src = p.parse_args(argv)
 
     if src.env_check:
-        import environment
-        if not environment.enforce(prefix="ENV"):
+        import logger
+        if not logger.enforce(prefix="ENV"):
             raise SystemExit("evaluate.py aborting: package versions do not match requirements.txt")
     else:
         print("ENV: --env_check 0 -- versions NOT verified for this evaluation.")
@@ -246,7 +247,6 @@ def main(argv=None):
     metrics["invariance_gate_max_abs_delta"] = 1e-5
 
     if src.calib_channel and os.path.exists(src.calib_channel):
-        from calibrate import fit_temperature
         _step(f"calibration: reading {src.calib_channel} ...")
         cal_table = load_split_table(src.calib_channel)
         _step(f"calibration: tokenizing {len(cal_table):,} questions ...")
@@ -258,8 +258,9 @@ def main(argv=None):
         for t in sorted(set(cal["types"].tolist())):
             m = cal["types"] == t
             temps[t], _ = fit_temperature(cal["logits"][m], cal["labels"][m], t)
-        scaler = torch.tensor([temps.get(int(t), 1.0) for t in res["types"].tolist()]).unsqueeze(1)
-        cal_probs = torch.softmax(res["logits"] / scaler, dim=-1)
+        res_logits_scaled = apply_per_type_temperature(res["logits"], res["types"],
+                                                       {int(t): float(v) for t, v in temps.items()})
+        cal_probs = torch.softmax(res_logits_scaled, dim=-1)
         metrics["temperatures"] = {TASK_NAMES[k]: v for k, v in temps.items()}
         metrics["calibration_n"] = int(cal["labels"].numel())
         metrics["nll_after_calibration"] = float(

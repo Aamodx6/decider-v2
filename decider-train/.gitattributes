@@ -1,0 +1,20 @@
+# Normalise line endings in the repository.
+#
+# `* text=auto eol=lf` makes git store LF in the object database and check out LF
+# everywhere, which is what keeps cloud_startup_script.sh runnable on a Linux GPU box:
+# a CRLF shell script fails there with `bash: $'\r': command not found`.
+* text=auto eol=lf
+
+# Binary assets must never be normalised: converting a PNG rewrites its bytes.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.parquet binary
+*.safetensors binary
+*.pt binary
+*.bin binary
+*.zip binary
+*.gz binary

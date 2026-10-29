@@ -218,15 +218,22 @@ class Logger:
         m.update(meta or {})
         m["name"] = name
         m["merge"] = merge
+        # 'latest' is the auto-resume source and must round-trip the fp32 training weights; bf16
+        # there would put every resumed run ~1e-4 away from the uninterrupted one. 'best'/'final'
+        # are evaluation/deployment artifacts and stay bf16.
+        lossless = name == "latest"
+        m["fp32_backbone"] = lossless
         from network import save_checkpoint as _save
-        _save(network, os.path.join(self.model_dir, name), m, merge=merge)
+        _save(network, os.path.join(self.model_dir, name), m, merge=merge,
+              fp32_backbone=lossless)
         state = {"optim": optim.state_dict() if optim is not None else None,
                  "sched": scheduler.state_dict() if scheduler is not None else None,
                  "step": step, "best_acc": self.best_acc if best_acc is None else best_acc}
         torch.save(state, os.path.join(self.model_dir, name, "optim.pt"))
         if self.checkpoint_dir and os.path.abspath(self.checkpoint_dir) != os.path.abspath(self.model_dir):
             os.makedirs(os.path.join(self.checkpoint_dir, name), exist_ok=True)
-            _save(network, os.path.join(self.checkpoint_dir, name), m, merge=merge)
+            _save(network, os.path.join(self.checkpoint_dir, name), m, merge=merge,
+                  fp32_backbone=lossless)
             torch.save(state, os.path.join(self.checkpoint_dir, name, "optim.pt"))
 
     def write_summary(self, summary):

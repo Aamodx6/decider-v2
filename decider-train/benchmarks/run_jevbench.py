@@ -1,4 +1,4 @@
-"""JevBench adapter for decider_v2.
+"""JevBench adapter for decider-train.
 
 Follows the shape of `jevbench/adapters/so1_decider.py`: an in-process adapter that loads a model
 once, exposes `run(task)`, and returns a `DecisionResult`-shaped dict.  The difference is the
@@ -90,7 +90,7 @@ def run(runner, tasks, limit=0, progress_every=0):
     # Batch the forward passes: one encode+forward per task, but grouped so the GPU sees batches.
     t_all = time.perf_counter()
     items = [(t.state, t.question) for t in tasks]
-    print(f"running {len(items)} decisions through decider_v2 ...", flush=True)
+    print(f"running {len(items)} decisions through decider-train ...", flush=True)
     outs = runner.predict_questions(items, progress_every=progress_every)
     wall = time.perf_counter() - t_all
 

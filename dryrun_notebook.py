@@ -1,73 +1,60 @@
-"""Execute decider_v2_sagemaker.ipynb offline with the AWS plumbing stubbed out.
+"""Execute decider-train/sagemaker_train.ipynb offline with the AWS plumbing stubbed out.
 
-The MODEL code is real: tests.py, prepare.py, train.py, evaluate.py and the split-carving all run
-for real.  Only S3 and the training-job launcher are faked (_dryrun/), so this is a genuine
-end-to-end check of the notebook's control flow, its SMOKE-mode plumbing and its SageMaker wiring.
+The MODEL code is real: tests/test_core.py, dataset.py prepare, train.py, evaluate.py and the
+split-carving all run for real.  Only S3 and the training-job launcher/monitor/metering are
+faked (_dryrun/), so this is a genuine end-to-end check of the notebook's control flow, its
+SMOKE-mode plumbing and its SageMaker wiring -- with the notebook's own cwd (decider-train/).
 
-    python dryrun_notebook.py            # run every cell
-    python dryrun_notebook.py --stop-after 12
+    python dryrun_notebook.py                # run every cell
+    python dryrun_notebook.py --stop-after N # run only cells 0..N-1 (0-indexed, all kinds)
 """
 import argparse
 import asyncio
+import json
 import os
 import shutil
 import sys
 import time
 
-# nbclient captures cell output over ZMQ's iopub socket, which needs add_reader.  Windows' default
+# nbclient captures cell output over ZMQ's iopub socket, which needs add_reader. Windows' default
 # Proactor event loop does not implement it, and the symptom is silently EMPTY outputs rather than
 # an error, so switch the policy before the kernel starts.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.join(ROOT, "decider-train")
+NB = os.path.join(REPO, "sagemaker_train.ipynb")
 DRY = os.path.join(ROOT, "_dryrun")
-WORK = os.path.join(ROOT, "decider_v2_work")
-NB = os.path.join(ROOT, "decider_v2_sagemaker.ipynb")
-OUT = os.path.join(ROOT, "_dryrun_out.ipynb")
 
-# The notebook is executed with CWD = ROOT, exactly as it would be if you opened it from here, so
-# it finds ./decider_v2_src and creates ./decider_v2_work.
-src_link = os.path.join(ROOT, "decider_v2_src")
-if os.path.exists(src_link) and not os.path.isdir(src_link):
-    os.remove(src_link)
-if os.path.isdir(src_link):
-    shutil.rmtree(src_link)
-# bench/ must survive the copy: cell 12 runs the JevBench / sysone-bench adapters out of SRC_DIR.
-shutil.copytree(os.path.join(ROOT, "decider_v2"), src_link,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "_*.txt", "*.json"),
-                dirs_exist_ok=True)
-os.makedirs(WORK, exist_ok=True)
-
-# Point the benchmark adapters at the pristine clones in ref/, which is what a real user would do
-# with JEVBENCH_ROOT / SYSONE_BENCH_ROOT. This is what lets cell 12 produce REAL numbers offline.
-for var, sub in (("JEVBENCH_ROOT", "jevbench"), ("SYSONE_BENCH_ROOT", "sysone-bench")):
-    path = os.path.join(ROOT, "ref", sub)
-    if os.path.isdir(path):
-        os.environ[var] = path
-        print(f"{var} -> {path}")
-    else:
-        print(f"{var} NOT SET ({path} missing) -- cell 12 will report NOT RUN for that harness")
-
-# reuse the HF cache that recon already populated so the dry run is offline and fast
-cache_src = r"C:\Users\aamod\AppData\Local\Temp\opencode\hf_cache"
-cache_dst = os.path.join(WORK, "hf_cache")
-os.makedirs(cache_dst, exist_ok=True)
-if os.path.isdir(cache_src) and os.path.abspath(cache_src) != os.path.abspath(cache_dst):
-    for entry in os.listdir(cache_src):
-        s, d = os.path.join(cache_src, entry), os.path.join(cache_dst, entry)
-        if os.path.exists(d):
-            continue
-        if os.path.isdir(s):
-            shutil.copytree(s, d)
-        else:
-            shutil.copy2(s, d)
-    print(f"reused HF cache: {cache_src} -> {cache_dst}")
+# The stub is a pip-free fake: importlib.metadata.version("sagemaker") must answer from a real
+# Distribution object, so put a synthetic dist-info tree on sys.path for the checker in cell 3.
+_SITE = os.path.join(DRY, "_site")
+os.makedirs(_SITE, exist_ok=True)
+_di = os.path.join(_SITE, "sagemaker-2.247.0.dist-info")
+os.makedirs(_di, exist_ok=True)
+with open(os.path.join(_di, "METADATA"), "w", encoding="utf-8") as fh:
+    fh.write("Metadata-Version: 2.1\nName: sagemaker\nVersion: 2.247.0-dryrun\n")
+if os.path.abspath(_SITE) not in [os.path.abspath(p) for p in sys.path]:
+    sys.path.insert(0, _SITE)
 
 
-def _src(cell):
-    """nbformat stores source as a string; freshly built notebooks use a list of lines."""
-    return cell.source if isinstance(cell.source, str) else "\n".join(cell.source)
+def _clean():
+    """A dry run starts from zero state: wiped runs/state/data and wiped S3 stub tree."""
+    for name in ("decider_v2_state_smoke.json", "decider_v2_state.json"):
+        p = os.path.join(REPO, name)
+        if os.path.exists(p):
+            os.remove(p)
+    for sub in ("runs", "data_smoke", "data_prepared", "build"):
+        p = os.path.join(REPO, sub)
+        if os.path.isdir(p):
+            shutil.rmtree(p)
+    s3tree = os.path.join(ROOT, "_dryrun_s3")
+    if os.path.isdir(s3tree):
+        shutil.rmtree(s3tree)
+    logs = os.path.join(DRY, "logs")
+    if os.path.isfile(logs):
+        os.remove(logs)
 
 
 def execute_in_process(nb, work):
@@ -81,12 +68,14 @@ def execute_in_process(nb, work):
     for i, cell in enumerate(nb.cells):
         if cell.cell_type != "code":
             continue
-        src = _src(cell)
-        print(f"\n{'#' * 78}\n# CELL {i}: {src.splitlines()[0]}\n{'#' * 78}", flush=True)
+        src = cell.source if isinstance(cell.source, str) else "\n".join(cell.source)
+        print(f"\n{'#' * 78}\n# CELL {i} ({cell.get('name', '?')}): {src.splitlines()[0]}\n{'#' * 78}",
+              flush=True)
         try:
             exec(compile(src, f"cell-{i}", "exec"), ns)
-        except SystemExit:
-            raise
+        except SystemExit as e:
+            if e.code not in (0, None):
+                raise
         except BaseException as e:
             import traceback
             traceback.print_exc()
@@ -96,26 +85,29 @@ def execute_in_process(nb, work):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stop-after", type=int, default=0)
+    ap.add_argument("--stop-after", type=int, default=0,
+                    help="run at most the first N cells (counting markdown cells too)")
+    ap.add_argument("--keep", action="store_true", help="do not wipe runs/S3 stub state first")
     ap.add_argument("--timeout", type=int, default=60 * 180)
-    ap.add_argument("--keep", action="store_true", help="do not clear previous outputs first")
-    ap.add_argument("--nbclient", action="store_true")
     args = ap.parse_args()
 
-    os.environ["PYTHONPATH"] = DRY + os.pathsep + os.environ.get("PYTHONPATH", "")
     if DRY not in sys.path:
-        sys.path.insert(0, DRY)   # PYTHONPATH is read at interpreter start; this process is already up
+        sys.path.insert(0, DRY)
+    os.environ["PYTHONPATH"] = DRY + os.pathsep + _SITE + os.pathsep + os.environ.get("PYTHONPATH", "")
     os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["DRYRUN_FAST"] = "1"           # the stub clamps smoke budgets to 2 steps locally
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    # benchmark adapters point at the pristine clones in ref/, as a real user would
+    for var, sub in (("JEVBENCH_ROOT", "jevbench"), ("SYSONE_BENCH_ROOT", "sysone-bench")):
+        path = os.path.join(ROOT, "ref", sub)
+        if os.path.isdir(path):
+            os.environ[var] = path
+            print(f"{var} -> {path}")
+        else:
+            print(f"{var} NOT SET ({path} missing) -- cell 15 will report NOT RUN for that harness")
+
     if not args.keep:
-        for p in (OUT, os.path.join(WORK, "decider_v2_state.json")):
-            if os.path.exists(p):
-                os.remove(p)
-        for sub in ("data", "eval", "downloads"):
-            p = os.path.join(WORK, sub)
-            if os.path.isdir(p):
-                shutil.rmtree(p)
+        _clean()
 
     import nbformat
     nb = nbformat.read(NB, as_version=4)
@@ -123,14 +115,7 @@ def main():
         nb.cells = nb.cells[:args.stop_after]
 
     t0 = time.time()
-    if args.nbclient:
-        from nbclient import NotebookClient
-        client = NotebookClient(nb, timeout=args.timeout, kernel_name="python3",
-                                resources={"metadata": {"path": ROOT}}, allow_errors=False)
-        client.execute()
-        nbformat.write(nb, OUT)
-    else:
-        execute_in_process(nb, ROOT)
+    execute_in_process(nb, REPO)
     print(f"\ndry run finished in {time.time() - t0:.0f}s")
     return 0
 

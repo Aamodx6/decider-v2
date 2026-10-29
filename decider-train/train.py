@@ -1,9 +1,24 @@
 """One training script.  Runs identically on a laptop CPU (tiny config) and on SageMaker.
 
+New in this layout (bev-train style repo):
+
+  --config <yaml>         a configs/*.yaml file supplies EVERY training argument; precedence is
+                          argparse default < yaml < command line, values are cast to the type of
+                          the argparse default, and unknown yaml keys raise.  Recipes on the
+                          ladder: configs/smoke.yaml, configs/baseline_replica.yaml,
+                          configs/decider_v2.yaml, plus configs/ablations/ for the Tier-2 rungs.
+  --checkpoint_dir        where `latest` / `best` / `final` are mirrored (default
+                          /opt/ml/checkpoints when it exists, else ./outputs/checkpoints)
+  --auto_resume 1         if <checkpoint_dir>/latest/optim.pt exists, resume step / optimiser /
+                          scheduler and skip the micro-batches already consumed in the current epoch
+  budget footgun fixed    with --max_steps set, epochs iterate until total_steps is reached;
+                          --epochs is only a cap when --max_steps is unset. summary.json records
+                          final_step and total_steps; a run that ends off-budget exits non-zero.
+
 SageMaker surface
   channels    SM_CHANNEL_TRAIN / _VAL / _CALIB / _TEST  (directories of .parquet)
   outputs     SM_MODEL_DIR (checkpoints)  /  SM_OUTPUT_DATA_DIR (final model + metrics.jsonl)
-  hyperparams passed as CLI flags by the estimator (no config file needed)
+  hyperparams passed as CLI flags by the estimator (a --config selects the recipe file)
 
 Logging line format (regex-friendly for SageMaker metric_definitions):
     step=1000 loss=0.8123 grad_norm=0.41 lr_lora=1.9e-04 lr_head=9.5e-04 acc=0.71 sps=42.1
@@ -11,28 +26,122 @@ Logging line format (regex-friendly for SageMaker metric_definitions):
 
 import argparse
 import json
-import math
 import os
 import random
+import shlex
+import sys
 import time
-from functools import partial
 from collections import defaultdict
+from functools import partial
 
 import numpy as np
 import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 
-from data import (DecisionDataset, LengthBucketBatchSampler, collate, load_split_table,
-                  state_token_lengths)
-from losses import compute_loss
-from model import build_model, count_params, load_checkpoint, save_checkpoint
-from serialize import (POOL_BEV, POOL_MEAN, POOL_OPT_END, TASK_NAMES, Encoder, TASK_TYPES,
-                       pad_ranks)
+from dataset import (DecisionDataset, LengthBucketBatchSampler, collate, load_split_table,
+                     state_token_lengths)
+from logger import Logger, check_environment
+from network import build_model, compute_loss, load_checkpoint
+from tokenization import POOL_BEV, POOL_MEAN, POOL_OPT_END, TASK_NAMES, Encoder
+
+
+# --------------------------------------------------------------------------- config files
+# yaml section -> (dest mapping).  A leaf key that is missing from the map is UNKNOWN and raises.
+def _config_leaf_map():
+    return {
+        None: {"seed": "seed"},
+        "model": {"backbone_name": "backbone_name", "num_layers": "num_layers",
+                  "random_init": "random_init", "attn_implementation": "attn_implementation",
+                  "vocab_size": "vocab_size"},
+        "lora": {"r": "lora_r", "alpha": "lora_alpha", "dropout": "lora_dropout",
+                 "last_k_layers": "lora_last_k_layers", "include_mlp": "lora_include_mlp"},
+        "head": {"type": "head", "new_dim": "head_new_dim", "layers": "head_layers",
+                 "heads": "head_heads", "dropout": "head_dropout", "n_ctx": "n_ctx",
+                 "use_ctx": "use_ctx", "use_rank": "use_rank", "use_null": "use_null",
+                 "use_derived": "use_derived", "derived_dropout": "derived_dropout"},
+        "loss": {"label_smoothing": "label_smoothing", "emd_lambda": "emd_lambda",
+                 "type_weights": "type_weights"},
+        "data": {"train_channel": "train_channel", "val_channel": "val_channel",
+                 "test_channel": "test_channel", "max_state_tokens": "max_state_tokens",
+                 "max_choice_tokens": "max_choice_tokens", "mode": "mode", "pool": "pool",
+                 "noul_use_criteria": "noul_use_criteria", "shuffle_options": "shuffle_options",
+                 "num_workers": "num_workers", "limit_train": "limit_train",
+                 "limit_val": "limit_val"},
+        "optim": {"batch_size": "batch_size", "grad_accum_steps": "grad_accum_steps",
+                  "max_steps": "max_steps", "epochs": "epochs", "lr_lora": "lr_lora",
+                  "lr_head": "lr_head", "weight_decay": "weight_decay",
+                  "warmup_ratio": "warmup_ratio", "grad_clip": "grad_clip",
+                  "gradient_checkpointing": "gradient_checkpointing",
+                  "max_train_minutes": "max_train_minutes"},
+        "logging": {"log_every": "log_every", "eval_every": "eval_every", "save_every": "save_every",
+                    "model_dir": "model_dir", "output_dir": "output_dir",
+                    "checkpoint_dir": "checkpoint_dir", "resume": "resume",
+                    "auto_resume": "auto_resume", "selftest": "selftest", "env_check": "env_check"},
+    }
+
+
+def load_config(path):
+    """-> {argparse dest: value}. Raises on unknown, empty or malformed config files."""
+    import yaml
+    with open(path, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    if not isinstance(cfg, dict):
+        raise SystemExit(f"config {path}: expected a mapping of sections, got {type(cfg).__name__}")
+    leaf_map = _config_leaf_map()
+    out = {}
+    top_level = leaf_map.get(None, {})
+    for section, body in cfg.items():
+        if not isinstance(body, dict) and section in top_level:
+            out[top_level[section]] = body      # top-level scalar, e.g. `seed: 0`
+            continue
+        if section not in leaf_map:
+            raise SystemExit(f"config {path}: unknown section {section!r} "
+                             f"(valid: {sorted((str(k) for k in leaf_map))})")
+        if body is None:
+            continue
+        if not isinstance(body, dict):
+            raise SystemExit(f"config {path}: section {section!r} must be a mapping, "
+                             f"got {type(body).__name__}")
+        for leaf, val in body.items():
+            dest = leaf_map[section].get(leaf)
+            if dest is None:
+                raise SystemExit(f"config {path}: unknown key {section}.{leaf} "
+                                 f"(valid keys: {sorted(leaf_map[section])})")
+            out[dest] = val
+    if not out:
+        raise SystemExit(f"config {path}: file did not define any training argument")
+    return out
+
+
+def _provided_dests(argv):
+    """dests explicitly present on the command line (these beat the yaml)."""
+    provided = set()
+    for tok in argv:
+        if tok.startswith("--"):
+            provided.add(tok[2:].split("=", 1)[0].replace("-", "_"))
+    return provided
+
+
+def _cast(dest, value, default):
+    """Cast a yaml value to the type the argparse default declares."""
+    if value is None:
+        return default
+    if default is True or default is False:          # store_true-style flags
+        return bool(value)
+    if isinstance(default, int) and not isinstance(default, bool):
+        return int(value)
+    if isinstance(default, float):
+        return float(value)
+    if isinstance(default, str):
+        return str(value)
+    return value
 
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser()
+    # config
+    p.add_argument("--config", default="", help="a configs/*.yaml supplying every training argument")
     # data
     p.add_argument("--train_channel", default=os.environ.get("SM_CHANNEL_TRAIN", "./data/train"))
     p.add_argument("--val_channel", default=os.environ.get("SM_CHANNEL_VAL", "./data/val"))
@@ -76,7 +185,9 @@ def parse_args(argv=None):
     p.add_argument("--batch_size", type=int, default=32, help="micro-batch")
     p.add_argument("--grad_accum_steps", type=int, default=2)
     p.add_argument("--max_steps", type=int, default=-1)
-    p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--epochs", type=int, default=1,
+                   help="epoch cap; only a cap when --max_steps is unset (otherwise the budget "
+                        "decides the number of epochs)")
     p.add_argument("--lr_lora", type=float, default=2e-4)
     p.add_argument("--lr_head", type=float, default=1e-3)
     p.add_argument("--weight_decay", type=float, default=0.01)
@@ -92,8 +203,21 @@ def parse_args(argv=None):
     p.add_argument("--limit_val", type=int, default=0)
     p.add_argument("--model_dir", default=os.environ.get("SM_MODEL_DIR", "./runs/model"))
     p.add_argument("--output_dir", default=os.environ.get("SM_OUTPUT_DATA_DIR", "./runs/output"))
+    p.add_argument("--checkpoint_dir",
+                   default=default_checkpoint_dir(),
+                   help="checkpoint mirror dir (/opt/ml/checkpoints on SageMaker; "
+                        "./outputs/checkpoints locally)")
     p.add_argument("--resume", default="")
+    p.add_argument("--auto_resume", type=int, default=0,
+                   help="resume from <checkpoint_dir>/latest/optim.pt if it exists "
+                        "(step + optimiser + scheduler + the consumed micro-batches)")
     p.add_argument("--max_train_minutes", type=float, default=-1)
+    p.add_argument("--stop_at_step", type=int, default=0,
+                   help="stop cleanly at this step and write a resumable 'latest' checkpoint, "
+                        "while keeping --max_steps and therefore the LR schedule intact (0 = "
+                        "off). A preemption drill: the restarted job must replay this run "
+                        "exactly, which is not true of a shorter --max_steps, because that "
+                        "also shortens the cosine schedule the first leg was trained on.")
     # --- preflight gates. Both default ON: a job that would produce numbers from the wrong library
     # versions, or from a broken mask, should fail in the first minute rather than after 12k steps.
     p.add_argument("--selftest", type=int, default=1,
@@ -102,10 +226,220 @@ def parse_args(argv=None):
     p.add_argument("--env_check", type=int, default=1,
                    help="verify requirements.txt pins; pip-install them if the container does not "
                         "already satisfy them, and abort the job if they still do not match")
-    return p.parse_args(argv)
+    p.add_argument("--sagemaker_args", default="",
+                   help="optional string of serialized CLI args from SageMaker")
+
+    if argv is None:
+        argv = sys.argv[1:]
+
+    # if SageMaker embedded a serialized arg string, splice it in front
+    _args = p.parse_known_args(argv)[0]
+    if getattr(_args, "sagemaker_args", ""):
+        embedded = shlex.split(_args.sagemaker_args)
+        expanded_argv = []
+        skip_next = False
+        for a in argv:
+            if skip_next:
+                skip_next = False
+                continue
+            if a == "--sagemaker_args":
+                skip_next = True
+                continue
+            if a.startswith("--sagemaker_args="):
+                continue
+            expanded_argv.append(a)
+        argv = embedded + expanded_argv
+
+    config_path = getattr(_args, "config", "")
+    args = p.parse_args(argv)
+    if config_path:
+        overrides = load_config(config_path)
+        defaults = {a.dest: a.default for a in p._actions if a.dest !=
+                    "help" and a.dest != "sagemaker_args"}
+        provided = _provided_dests(argv)
+        unknown = []
+        for dest, val in overrides.items():
+            if dest not in defaults:
+                unknown.append(dest)
+        if unknown:
+            raise SystemExit(f"config {config_path}: keys not accepted by train.py: {unknown}")
+        for dest, val in overrides.items():
+            if dest not in provided:
+                setattr(args, dest, _cast(dest, val, defaults[dest]))
+    return args
+
+
+def default_checkpoint_dir():
+    if os.path.isdir("/opt/ml/checkpoints"):
+        return "/opt/ml/checkpoints"
+    return os.environ.get("SM_CHECKPOINT_DIR", "./outputs/checkpoints")
+
+
+def _arg_defaults(parser):
+    for a in parser._actions:
+        yield a.dest, a.default
 
 
 # --------------------------------------------------------------------------- preflight
+SELFTEST_GATE = 1e-5
+
+
+def _byte_tokenizer():
+    """Deterministic byte-level tokenizer: no download, works offline.
+
+    Identical to the fixture in tests/test_core.py, so the two selftest paths measure the same
+    thing on the same bytes.
+    """
+    class ByteTok:
+        vocab_size = 256
+        pad_token_id = 0
+        name_or_path = "byte-tiny"
+
+        def get_vocab(self):
+            return {chr(i): i for i in range(256)}
+
+        def encode(self, text):
+            return [b for b in text.encode("utf-8") if b != 0] or [65]
+
+        def decode(self, ids):
+            return bytes(i for i in ids if i != 0).decode("utf-8", errors="replace")
+
+        def add_special_tokens(self, d):
+            return 0
+
+        def convert_tokens_to_ids(self, t):
+            ids = self.encode(t)
+            return ids[0] if ids else 65
+
+        def __len__(self):
+            return 256
+    return ByteTok()
+
+
+@torch.no_grad()
+def _option_hidden(net, batch, device):
+    """[B, K, H] backbone hidden states at each option's read position."""
+    b = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+    hidden = net.backbone(input_ids=b["input_ids"], attention_mask=b["attention_mask"],
+                          position_ids=b["position_ids"], use_cache=False).last_hidden_state.float()
+    bidx = torch.arange(hidden.shape[0], device=hidden.device)
+    return hidden[bidx[:, None], b["option_read_idx"]]
+
+
+def _run_compact_gates(device):
+    """The two structural gates, self-contained, for a source pack that ships no tests/ directory.
+
+    This is the fallback used inside the SageMaker container (the allowlist ships modules, not the
+    test suite).  Same two guarantees as tests/test_core.py, same byte tokenizer, same 1e-5
+    thresholds, ~4s on CPU: the packed-vs-separate equivalence (plus option isolation) under the
+    [B,1,L,L] additive mask with shared position ids, and option-order invariance.  Returns [] on
+    success, a list of failure names otherwise.
+    """
+    failures = []
+
+    def gate(name, worst, cap=SELFTEST_GATE):
+        ok = worst <= cap
+        print(f"  [{'PASS' if ok else 'FAIL'}] {name}  max delta {worst:.3e} (gate {cap:.0e})")
+        if not ok:
+            failures.append(name)
+
+    tok = _byte_tokenizer()
+    enc = Encoder(tok, max_state_tokens=512, max_choice_tokens=64, mode="bev", pool=POOL_BEV)
+
+    def tiny(seed):
+        ns = argparse.Namespace(backbone_name="tiny", num_layers=2, random_init=1,
+                                attn_implementation="sdpa", lora_r=4, lora_alpha=8,
+                                lora_dropout=0.0, lora_last_k_layers=2, lora_include_mlp=1,
+                                head="v2", head_new_dim=64, head_layers=2, head_heads=4,
+                                head_dropout=0.0, n_ctx=4, use_ctx=1, use_rank=1, use_null=0,
+                                pool=POOL_BEV)
+        torch.manual_seed(seed)
+        return build_model(ns).to(device).eval()
+
+    net = tiny(0)
+    g = torch.Generator().manual_seed(7)
+    prefix = " ".join(chr(97 + int(v) % 26) for v in torch.randint(0, 26, (60,), generator=g))
+
+    # gate 1: packed-vs-separate, over the option read positions
+    worst = 0.0
+    for k, lens in [(5, [3, 6, 2, 5, 4]), (8, [2 + (i % 4) for i in range(8)])]:
+        opts = [" ".join(chr(97 + int(v) % 26) for v in torch.randint(0, 26, (n,), generator=g))
+                for n in lens[:k]]
+        packed = enc.encode(prefix, "pick one", opts, "choice")
+        h = _option_hidden(net, collate([packed], tok.pad_token_id), device)[0]
+        for i in range(k):
+            solo = enc.encode(prefix, "pick one", [opts[i]], "choice")
+            hs = _option_hidden(net, collate([solo], tok.pad_token_id), device)[0, 0]
+            worst = max(worst, (h[i] - hs).abs().max().item())
+    gate("packed-vs-separate option hidden states", worst)
+
+    # gate 1b: option isolation -- dropping an option must not move the others
+    net2 = tiny(1)
+    opts = ["alpha beta gamma", "delta epsilon", "zeta eta theta iota"]
+    full_ex = enc.encode(prefix, "pick one", opts, "choice")
+    hf = _option_hidden(net2, collate([full_ex], tok.pad_token_id), device)[0]
+    keep = [0, 2]
+    red = enc.encode(prefix, "pick one", [opts[i] for i in keep], "choice")
+    hr = _option_hidden(net2, collate([red], tok.pad_token_id), device)[0]
+    drift = max((hf[i] - hr[j]).abs().max().item() for j, i in enumerate(keep))
+    gate("option isolation (dropping an option does not move the others)", drift)
+
+    # gate 2: option-order invariance on the probabilities
+    net3 = tiny(3)
+    worst_p = 0.0
+    k = 8
+    for seed_off in range(4):
+        opts = [f"option {i}: " + " ".join(["w"] * (2 + i)) for i in range(k)]
+        ex = enc.encode("some state text here", "which one", opts, "choice")
+        ex |= {"label": 0, "domain": "d", "idx": 0}
+        b = {kk: (v.to(device) if torch.is_tensor(v) else v)
+             for kk, v in collate([ex], tok.pad_token_id).items()}
+        with torch.no_grad():
+            base = net3(**b).float().masked_fill(~b["option_mask"], -1e9)
+        p0 = torch.softmax(base, -1)[0]
+        perm = list(range(k))
+        random.Random(seed_off).shuffle(perm)
+        alt_ex = enc.encode("some state text here", "which one", [opts[i] for i in perm], "choice")
+        alt_ex |= {"label": perm.index(0), "domain": "d", "idx": 0}
+        ab = {kk: (v.to(device) if torch.is_tensor(v) else v)
+              for kk, v in collate([alt_ex], tok.pad_token_id).items()}
+        with torch.no_grad():
+            alt = net3(**ab).float().masked_fill(~ab["option_mask"], -1e9)
+        pa = torch.softmax(alt, -1)[0]
+        back = torch.zeros_like(p0)
+        back[torch.tensor(perm, device=p0.device)] = pa
+        worst_p = max(worst_p, (back - p0).abs().max().item())
+    gate("order invariance mode=bev pool=bev", worst_p)
+
+    return failures
+
+
+def run_selftest(device):
+    """The two structural gates on a tiny 2-layer random-init model.
+
+    In a full checkout this runs the complete battery from tests/test_core.py.  In a stripped source
+    pack (the SageMaker allowlist ships no tests/ directory) it runs the equivalent gates built into
+    this module -- same two guarantees, same 1e-5 thresholds, ~4s on CPU.  Returns [] on success, a
+    list of failure names otherwise.
+    """
+    print("\n" + "=" * 78)
+    print("SELFTEST: packed-vs-separate equivalence + order invariance (tiny 2-layer config)")
+    print("=" * 78)
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p in (here, os.path.join(here, "tests")):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    try:
+        import test_core as _tests  # full battery: 4 gates + the launch-guard checks
+    except Exception:  # noqa: BLE001 -- any import trouble (e.g. no tests/ shipped) falls back
+        return _run_compact_gates(device)
+    torch.manual_seed(0)
+    _tests.FAILURES.clear()
+    _tests.test_packed_vs_separate(device)
+    _tests.test_order_invariance(device)
+    return list(_tests.FAILURES)
+
+
 def run_preflight(args, device, main_rank):
     """Version pins, then the two structural gates. Returns False if the job must not proceed.
 
@@ -113,11 +447,9 @@ def run_preflight(args, device, main_rank):
     answer); a failure is broadcast so that under torchrun every rank exits rather than rank 0
     aborting while the others sit in a collective.
     """
-    import environment
-
     ok = True
     if args.env_check:
-        ok &= environment.enforce(prefix="ENV")
+        ok &= check_environment()
         if not ok:
             print("ABORT: package versions do not match requirements.txt. Every published number "
                   "was produced with these pins; running anyway would make the results "
@@ -126,28 +458,14 @@ def run_preflight(args, device, main_rank):
         print("ENV: --env_check 0 -- versions NOT verified for this job.")
 
     if args.selftest:
-        print("\n" + "=" * 78)
-        print("SELFTEST: packed-vs-separate equivalence + order invariance (tiny 2-layer config)")
-        print("=" * 78)
-        try:
-            import tests as _tests
-            _tests.FAILURES.clear()
-            torch.manual_seed(0)
-            _tests.test_packed_vs_separate(device)
-            _tests.test_order_invariance(device)
-            failures = list(_tests.FAILURES)
-        except Exception as e:  # noqa: BLE001
-            import traceback
-            traceback.print_exc()
-            print(f"SELFTEST: raised {type(e).__name__}: {e}")
-            failures = ["selftest raised"]
-        if failures:
+        failures = run_selftest(device)
+        if not failures:
+            print("SELFTEST: PASS")
+        else:
             ok = False
             print(f"ABORT: selftest FAILED: {failures}. The 4-D mask / position-id guarantee this "
                   f"project is built on does not hold in this container, so any accuracy number "
                   f"from this job would be uninterpretable.")
-        else:
-            print("SELFTEST: PASS")
     else:
         print("SELFTEST: --selftest 0 -- structural gates NOT run for this job.")
 
@@ -254,7 +572,7 @@ def main(argv=None):
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.backbone_name)
     if args.mode == "special":
-        from serialize import extend_tokenizer, resize_and_init_embeddings
+        from tokenization import resize_and_init_embeddings
 
     encoder = Encoder(tokenizer, args.max_state_tokens, args.max_choice_tokens,
                       mode=args.mode, pool=args.pool, noul_use_criteria=args.noul_use_criteria)
@@ -273,7 +591,7 @@ def main(argv=None):
     sampler = LengthBucketBatchSampler(lengths, args.batch_size, shuffle=True, seed=args.seed)
     if world > 1:
         sampler = torch.utils.data.DistributedSampler(train_set, num_replicas=world, rank=rank,
-                                                       shuffle=True, seed=args.seed, drop_last=True)
+                                                      shuffle=True, seed=args.seed, drop_last=True)
     train_loader = DataLoader(train_set, batch_sampler=sampler,
                               collate_fn=partial(collate, pad_id=pad_id), num_workers=args.num_workers,
                               pin_memory=device.type == "cuda", persistent_workers=args.num_workers > 0)
@@ -326,6 +644,10 @@ def main(argv=None):
     if args.max_steps > 0 and total_steps != args.max_steps:
         raise SystemExit(f"total_steps {total_steps} != --max_steps {args.max_steps}")
     if main_rank:
+        dev_str = "cpu"
+        if device.type == "cuda":
+            props = torch.cuda.get_device_properties(0)
+            dev_str = f"{props.name}  {props.total_memory / 2**30:.2f} GiB"
         print("=" * 78)
         print("CONFIG (the three things that decide what gets trained)")
         print("=" * 78)
@@ -340,8 +662,11 @@ def main(argv=None):
         print(f"      budget: {total_steps:,} steps x {args.batch_size}x{args.grad_accum_steps} "
               f"= {total_steps * args.batch_size * args.grad_accum_steps:,} question presentations")
         print(f"      steps/epoch={steps_per_epoch:,} -> {total_steps / steps_per_epoch:.2f} epochs")
-        print(f"  device: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu'}"
-              f"{'  ' + str(torch.cuda.get_device_properties(0).total_memory / 2**30)[:4] + ' GiB' if torch.cuda.is_available() else ''}")
+        print(f"      epochs: {'budget-driven' if args.max_steps > 0 else args.epochs} "
+              f"({'--epochs is a cap when --max_steps is unset' if args.max_steps <= 0 else '--epochs ignored: epochs iterate until max_steps is reached'})"
+              f"  auto_resume={args.auto_resume}")
+        print(f"      checkpoints: model_dir={args.model_dir} checkpoint_dir={args.checkpoint_dir or '(same as model_dir)'}")
+        print(f"  device: {dev_str}")
         print("=" * 78, flush=True)
 
     tw = {}
@@ -350,7 +675,10 @@ def main(argv=None):
             k, v = part.split(":")
             tw[int(k)] = float(v)
 
-    step, best_acc, epoch = 0, -1.0, 0
+    logger = Logger(model_dir=args.model_dir, output_dir=args.output_dir,
+                    checkpoint_dir=args.checkpoint_dir, config=vars(args), main_rank=main_rank)
+
+    step, best_acc = 0, -1.0
     start_step = 0
     if args.resume:
         ckpt = args.resume
@@ -365,40 +693,46 @@ def main(argv=None):
             load_checkpoint(model.module if world > 1 else model, ckpt)
         if main_rank:
             print(f"resumed from {ckpt} at step {step} best_val_acc={best_acc:.4f}")
+    if args.auto_resume:
+        auto = os.path.join(args.checkpoint_dir or args.model_dir, "latest")
+        if os.path.exists(os.path.join(auto, "optim.pt")):
+            state = torch.load(os.path.join(auto, "optim.pt"), map_location="cpu", weights_only=False)
+            if state.get("step", 0) < step:
+                raise SystemExit(f"auto_resume: <checkpoint_dir>/latest is at step {state.get('step', 0)}, "
+                                 f"BEHIND the explicit --resume point {step}; refusing to go backwards")
+            optimizer.load_state_dict(state["optim"])
+            scheduler.load_state_dict(state["sched"])
+            step = state["step"]
+            best_acc = state.get("best_acc", -1.0)
+            start_step = step
+            load_checkpoint(model.module if world > 1 else model, auto)
+            if main_rank:
+                print(f"auto-resume: continuing from {auto} at step {step} "
+                      f"best_val_acc={best_acc:.4f}")
 
     if main_rank:
-        os.makedirs(args.model_dir, exist_ok=True)
-        os.makedirs(args.output_dir, exist_ok=True)
         print(f"trainable params: backbone={sum(q.numel() for q in backbone_params):,} "
               f"head={sum(q.numel() for q in head_params):,} "
               f"total={sum(q.numel() for q in backbone_params) + sum(q.numel() for q in head_params):,}")
         print(f"train questions={len(train_tbl):,} val questions={len(val_tbl):,} "
               f"batch={args.batch_size}x{args.grad_accum_steps} steps/epoch={steps_per_epoch} "
               f"total_steps={total_steps} device={device}")
-        with open(os.path.join(args.output_dir, "args.json"), "w") as f:
-            json.dump(vars(args), f, indent=2)
 
     meta = {"args": vars(args), "step": step, "pool": args.pool, "mode": args.mode,
             "head": args.head, "num_layers": args.num_layers,
             "max_state_tokens": args.max_state_tokens, "max_choice_tokens": args.max_choice_tokens}
 
-    def log(**kw):
-        if not main_rank:
-            return
-        line = " ".join(f"{k}={v:.6g}" if isinstance(v, float) else f"{k}={v}" for k, v in kw.items())
-        print(line, flush=True)
-        with open(os.path.join(args.output_dir, "metrics.jsonl"), "a") as f:
-            f.write(json.dumps(kw) + "\n")
-
     def save(name, merge=False):
         if not main_rank:
             return
-        net = model.module if world > 1 else model
-        save_checkpoint(net, os.path.join(args.model_dir, name), {**meta, "name": name, "merge": merge},
-                        merge=merge)
-        torch.save({"optim": optimizer.state_dict(), "sched": scheduler.state_dict(),
-                    "step": step, "best_acc": best_acc},
-                   os.path.join(args.model_dir, name, "optim.pt"))
+        logger.save_checkpoint(model.module if world > 1 else model, name, step,
+                               meta={"pool": args.pool, "mode": args.mode, "head": args.head,
+                                     "num_layers": args.num_layers, "step": step},
+                               merge=merge, optim=optimizer, scheduler=scheduler, best_acc=best_acc)
+
+    # budget-driven epochs: with --max_steps set, iterate epochs until total_steps; --epochs is then
+    # NOT a cap. Only when --max_steps is unset do --epochs bound the loop.
+    unbounded_epochs = args.max_steps > 0
 
     model.train()
     t0 = time.time()
@@ -407,18 +741,25 @@ def main(argv=None):
     done = False
     deadline = None if args.max_train_minutes <= 0 else time.time() + args.max_train_minutes * 60
 
-    for epoch in range(args.epochs):
+    epoch = start_step // steps_per_epoch
+    epoch_max = 10 ** 9 if unbounded_epochs else max(args.epochs, epoch + args.epochs)
+    micros_per_epoch = steps_per_epoch * args.grad_accum_steps
+    micros_to_skip = (start_step % steps_per_epoch) * args.grad_accum_steps if args.auto_resume else 0
+    optimizer.zero_grad(set_to_none=True)
+
+    while not done and epoch < epoch_max:
         if hasattr(sampler, "set_epoch"):
             sampler.set_epoch(epoch)
         if hasattr(train_set, "set_epoch"):
             train_set.set_epoch(epoch)
-        optimizer.zero_grad(set_to_none=True)
         for micro, batch in enumerate(train_loader, 1):
-            if micro > steps_per_epoch * args.grad_accum_steps:
+            if micro > micros_per_epoch:
                 break
             if step >= total_steps:
                 done = True
                 break
+            if epoch == start_step // steps_per_epoch and micro <= micros_to_skip:
+                continue  # auto_resume: skip micro-batches consumed before the resume point
             batch = {k: (v.to(device, non_blocking=True) if torch.is_tensor(v) else v)
                      for k, v in batch.items()}
             k = batch["option_mask"].sum(-1)
@@ -444,11 +785,10 @@ def main(argv=None):
             if step % args.log_every == 0:
                 sps = running_n / max(time.time() - t0, 1e-9)
                 peak = (torch.cuda.max_memory_allocated() / 2**30) if device.type == "cuda" else 0.0
-                log(step=step, loss=running / max(running_n, 1), grad_norm=float(gn),
-                    acc=running_correct / max(running_n, 1), lr_lora=args.lr_lora, lr_head=args.lr_head,
-                    sps=sps, peak_gib=round(peak, 2))
+                logger.log(step=step, loss=running / max(running_n, 1), grad_norm=float(gn),
+                           acc=running_correct / max(running_n, 1), lr_lora=args.lr_lora,
+                           lr_head=args.lr_head, sps=sps, peak_gib=round(peak, 2))
                 running, running_correct, running_n, t0 = 0.0, 0, 0, time.time()
-                t0 = time.time()
             if step % args.save_every == 0:
                 save("latest")
             if step % args.eval_every == 0:
@@ -463,50 +803,73 @@ def main(argv=None):
                     line += "  worst_domains=" + ",".join(
                         f"{k.split(':', 1)[1][:18]}:{v:.3f}" for k, v in doms[:5])
                     print(line, flush=True)
-                    with open(os.path.join(args.output_dir, "metrics.jsonl"), "a") as f:
-                        f.write(json.dumps({"step": step, "val_loss": m["loss"],
-                                            "val_acc": m["accuracy"],
-                                            **{k.replace("/", "_"): v for k, v in m.items() if k != "loss"}}) + "\n")
+                    logger.log(step=step, split="val", _stdout=False,
+                               val_loss=m["loss"], val_acc=m["accuracy"],
+                               **{k.replace("/", "_"): v for k, v in m.items() if k != "loss"})
                 if m["accuracy"] > best_acc:
                     best_acc = m["accuracy"]
                     save("best")
+            if args.stop_at_step > 0 and step >= args.stop_at_step:
+                # Deliberate stop at a step boundary: save what auto_resume needs even when
+                # stop_at_step is not a multiple of save_every, then leave the loop with
+                # total_steps (and the loaded scheduler's horizon) unchanged.
+                save("latest")
+                if main_rank:
+                    print(f"stopping early at step {step}: --stop_at_step reached "
+                          f"(budget stays {total_steps})", flush=True)
+                done = True
+                break
             if deadline and time.time() > deadline:
                 if main_rank:
                     print(f"stopping early at step {step}: max_train_minutes reached", flush=True)
                 done = True
                 break
-        if done:
-            break
+        if not unbounded_epochs and step >= total_steps:
+            done = True
+        epoch += 1
 
     if step > start_step or not os.path.exists(os.path.join(args.model_dir, "final")):
         save("final", merge=False)
     if main_rank:
         m = evaluate(model.module if world > 1 else model, val_loader, device, amp_dtype, world, rank)
-        summary = {"final_step": step, "best_val_acc": best_acc, "val": m,
-                   "duration_sec": round(time.time() - run_start, 1),
-                   # Recorded rather than assumed downstream: the notebook reads these instead of
-                   # trusting that a checkpoint named "best" means best-on-validation.
+        if best_acc < 0:
+            # No mid-training evaluation ran (the run is shorter than --eval_every, or it stopped
+            # at --stop_at_step before the first one). 'best' would otherwise never exist, and
+            # evaluate.py selects 'best'; the only evaluated weights are the final ones.
+            best_acc = m["accuracy"]
+            save("best")
+        summary = {"final_step": step, "total_steps": total_steps, "best_val_acc": best_acc,
+                   "val": m,
                    "config": {
                        "checkpoint_selection": "best_val_accuracy",
                        "checkpoint_selection_source": "val split only; test split never read",
                        "eval_every": args.eval_every,
                        "save_every": args.save_every,
-                       "max_steps": total_steps,
+                       "max_steps": args.max_steps,
+                       "auto_resume": args.auto_resume,
+                       "stop_at_step": args.stop_at_step,
                        "lr_schedule_steps": sched_total,
                        "lr_warmup_steps": warmup_steps,
-                       "question_presentations": total_steps * args.batch_size * args.grad_accum_steps,
+                       "question_presentations": step * args.batch_size * args.grad_accum_steps,
                        "batch_size": args.batch_size,
                        "grad_accum_steps": args.grad_accum_steps,
                        "steps_per_epoch": steps_per_epoch,
-                       "epochs": round(total_steps / steps_per_epoch, 4),
+                       "epochs": round(step / steps_per_epoch, 4),
                        "seed": args.seed,
                        "head": args.head,
                        "model_dir": args.model_dir,
+                       "checkpoint_dir": args.checkpoint_dir,
                        "output_dir": args.output_dir,
                    }}
-        with open(os.path.join(args.output_dir, "summary.json"), "w") as f:
-            json.dump(summary, f, indent=2)
-        print("SUMMARY " + json.dumps(summary), flush=True)
+        logger.write_summary(summary)
+        stopped_on_purpose = bool(args.stop_at_step > 0 and step >= args.stop_at_step)
+        if args.max_steps > 0 and step != total_steps and not stopped_on_purpose:
+            raise SystemExit(
+                f"TRAINING BUDGET NOT MET: stopped at step {step} but --max_steps says {total_steps}. "
+                f"The run is incomplete (checkpoints 'latest'/'best' exist, 'final' is at step {step}). "
+                f"Re-run with --auto_resume 1 to continue from the checkpoint, or raise --epochs; "
+                f"summary.json WAS written and records final_step={step} against total_steps={total_steps}."
+            )
     if world > 1:
         dist.barrier()
         dist.destroy_process_group()

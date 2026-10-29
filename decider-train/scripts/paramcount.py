@@ -5,12 +5,17 @@ Uses random-init Qwen3 configs, so it needs no download and no GPU: only the SHA
 """
 import argparse
 import json
+import os
+import sys
 
-import torch
 from transformers import Qwen3Config
 
-from model import (DecisionHeadV1, DecisionHeadV2, attach_lora, build_backbone, count_params,
-                   lora_target_regex)
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from network import (DecisionHeadV1, DecisionHeadV2, attach_lora, build_backbone, count_params,
+                     lora_target_regex)
 
 
 def n(m):
@@ -33,10 +38,17 @@ def main():
     D = 1024
 
     def real_config(num_layers):
-        cfg = Qwen3Config.from_pretrained(args.qwen_config)
+        if os.path.isfile(args.qwen_config):
+            cfg = Qwen3Config.from_json_file(args.qwen_config)
+        else:
+            cfg = Qwen3Config.from_pretrained(args.qwen_config)
         cfg.num_hidden_layers = num_layers
         if getattr(cfg, "layer_types", None):
-            cfg.layer_types = list(cfg.layer_types)[:num_layers]
+            base_types = list(cfg.layer_types)
+            if len(base_types) < num_layers:
+                last_type = base_types[-1] if base_types else "full_attention"
+                base_types.extend([last_type] * (num_layers - len(base_types)))
+            cfg.layer_types = base_types[:num_layers]
         return cfg
 
     print("=" * 92)

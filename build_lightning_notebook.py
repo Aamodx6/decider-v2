@@ -29,7 +29,7 @@ import os
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "decider_v2")
+SRC = os.path.join(HERE, "decider-train")
 OUT = os.path.join(HERE, "decider_v2_lightning.ipynb")
 
 cells = []
@@ -286,7 +286,7 @@ code("3-prepare", '''
 # Explode rows -> one record per typed question, then carve train / val / calib / test.
 # SPLIT_SEED is fixed for the whole run: it carves the splits AND samples the SMOKE test shard, so
 # every arm and every seed trains and is scored on byte-identical data.
-subprocess.check_call([LOCAL_PY, os.path.join(SRC_DIR, "prepare.py"),
+subprocess.check_call([LOCAL_PY, os.path.join(SRC_DIR, "dataset.py"), "prepare",
                        "--out", DATA, "--seed", str(SPLIT_SEED),
                        "--calib_target", "20000", "--val_frac", "0.03",
                        "--cache_dir", CACHE, "--force"]
@@ -326,7 +326,7 @@ else:
           n_test == FULL_TEST_N, f"({n_test:,} of {FULL_TEST_N:,})")
     if n_test != FULL_TEST_N:
         raise AssertionError(f"real run must evaluate all {FULL_TEST_N:,} test questions, got {n_test:,}. "
-                             f"Either SMOKE=True or fix the prepare.py shard argument.")
+                             f"Either SMOKE=True or fix the dataset.py prepare shard argument.")
 
 print("  split sizes:", m["sizes"])
 for name in ("train", "val", "calib", "test"):
@@ -350,7 +350,7 @@ md("4. Preflight: self-test and throughput",
    "On a different GPU from the one you benchmarked on, this number is the one that matters.")
 
 code("4-selftest", '''
-rc = subprocess.call([LOCAL_PY, os.path.join(SRC_DIR, "tests.py"),
+rc = subprocess.call([LOCAL_PY, os.path.join(SRC_DIR, "tests", "test_core.py"),
                       "--device", "cuda" if os.environ.get("FORCE_CPU", "") != "1" else "cpu"],
                      cwd=SRC_DIR, env=LOCAL_ENV)
 if rc != 0:
@@ -363,7 +363,7 @@ code("4-bench", '''
 # Times a few real steps through the exact train.py path on this GPU. Prints the number that turns
 # "940K presentations" into "about N hours", which is the only figure that decides whether the real
 # budget is affordable HERE.
-rc = subprocess.call([LOCAL_PY, os.path.join(SRC_DIR, "bench.py"),
+rc = subprocess.call([LOCAL_PY, os.path.join(SRC_DIR, "scripts", "bench.py"),
                       "--out", os.path.join(RUNS, "bench_v2.json"),
                       "--batch_size", str(BATCH_SIZE),
                       "--max_state_tokens", str(MAX_STATE_TOKENS),
@@ -938,11 +938,19 @@ else:
 
 # ------------------------------------------------------------------ emit
 def build_src_zip_b64():
-    """Zip decider_v2/{*.py, bench/*.py, requirements.txt} as decider_v2_src/ and base64 it, so this
+    """Zip the decider-train source pack (root *.py, benchmarks/, scripts/, tests/gradient_gates.py,
+    configs/, requirements.txt) as decider_v2_src/ and base64 it, so this
     one notebook carries everything it runs. Only files the runs actually execute ship."""
     files = sorted(glob.glob(os.path.join(SRC, "*.py"))) \
-        + sorted(glob.glob(os.path.join(SRC, "bench", "*.py"))) \
+        + sorted(glob.glob(os.path.join(SRC, "benchmarks", "*.py"))) \
+        + sorted(glob.glob(os.path.join(SRC, "scripts", "*.py"))) \
+        + [os.path.join(SRC, "tests", "test_core.py")] \
+        + sorted(glob.glob(os.path.join(SRC, "configs", "*.yaml"))) \
+        + sorted(glob.glob(os.path.join(SRC, "configs", "ablations", "*.yaml"))) \
         + [os.path.join(SRC, "requirements.txt")]
+
+    for f in files:
+        assert os.path.isfile(f), f"source pack: missing {f}"
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for f in files:

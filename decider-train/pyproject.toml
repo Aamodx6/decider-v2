@@ -1,6 +1,6 @@
 [project]
 name = "decider-train"
-version = "0.1.0"
+version = "0.2.0"
 description = "Training, evaluation and calibration pipeline for the decider-v2 study (bev-train style)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -48,4 +48,12 @@ dev = [
 ]
 
 [tool.uv]
-# Nothing special: uv lock / uv sync / uv export are used to produce uv.lock and requirements.txt.
+# uv lock / uv sync / uv export are used to produce uv.lock and requirements.txt.
+#
+# torch is NOT a project dependency -- the SageMaker container owns the CUDA-matched build and
+# overwriting it is how a GPU job ends up on a CPU-only torch. But peft depends on torch, so the
+# resolver still has to pick one, and without a constraint it picks the newest release (2.14.1),
+# which is six minor versions away from the container. An override pins the lockfile to the
+# container's version so `uv sync` and the training job import the same torch, while keeping torch
+# out of the [project] dependency list (and therefore out of requirements.txt).
+override-dependencies = ["torch==2.7.1"]

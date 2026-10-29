@@ -3,10 +3,10 @@
 Both harnesses need the same three things, so they live here once:
 
   1. load the model ONCE (a trained checkpoint, or the published reference), on the best device
-     available -- the same `model.load_checkpoint` / `model.load_reference_bev_decider` /
-     `serialize.Encoder` path `evaluate.py` uses, so a benchmark number is produced by the same
+     available -- the same `network.load_checkpoint` / `network.load_reference_bev_decider` /
+     `tokenization.Encoder` path `evaluate.py` uses, so a benchmark number is produced by the same
      code that produces the in-notebook test-split number;
-  2. turn one benchmark question into options via `serialize.question_to_options`, which is the
+  2. turn one benchmark question into options via `tokenization.question_to_options`, which is the
      exact function training used, so the surface form of an option cannot drift between the two;
   3. batch a list of (state, question) through the network and return per-option probabilities.
 
@@ -31,9 +31,9 @@ _SRC = os.path.dirname(_HERE)
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from data import collate  # noqa: E402
-from model import build_model, load_checkpoint, load_reference_bev_decider  # noqa: E402
-from serialize import TASK_TYPES, Encoder, question_to_options  # noqa: E402
+from dataset import collate  # noqa: E402
+from network import build_model, load_checkpoint, load_reference_bev_decider  # noqa: E402
+from tokenization import TASK_TYPES, Encoder, question_to_options  # noqa: E402
 
 
 def _masked_softmax(logits, option_mask):
@@ -43,7 +43,7 @@ def _masked_softmax(logits, option_mask):
 
 
 class DeciderRunner:
-    """Loads a decider_v2 model once and answers (state, question) pairs."""
+    """Loads a decider-train model once and answers (state, question) pairs."""
 
     def __init__(self, checkpoint=None, reference=None, device=None, batch_size=8,
                  max_state_tokens=1024, max_choice_tokens=64, noul_use_criteria=False):

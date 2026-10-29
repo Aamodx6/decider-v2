@@ -7,8 +7,11 @@ build/
 
 # data and artifacts (never in version control)
 data/
+data_smoke/
+data_prepared/
 outputs/
 checkpoints/
+runs/
 *.parquet
 *.safetensors
 

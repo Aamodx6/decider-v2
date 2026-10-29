@@ -1,6 +1,9 @@
 # local tool/dataset dirs that must never enter version control
 .freebuff/
 .venv-gpu/
+.venv-271/
+.pytest_cache/
+.agents/
 __pycache__/
 *.pyc
 

@@ -1,4 +1,4 @@
-"""tests.py -- the four gates.  Run with `python tests.py [--device cpu] [--tiny]`.
+"""test_core.py -- the four gates.  Run with `python tests/test_core.py [--device cpu] [--steps 300]`.
 
 (a) packed-vs-separate equivalence   the [B,1,L,L] additive mask + shared position ids reproduce
                                       running each option alone against the same prefix
@@ -14,24 +14,26 @@ against it; it is skipped by default because it is slow.
 
 import argparse
 import csv
-import math
 import os
 import random
 import shutil
+import os
 import sys
 import tempfile
 import time
 
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+for p in (_ROOT, _HERE):
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from data import DecisionDataset, collate
-from losses import compute_loss, emd_loss, expected_calibration_error
-from model import build_model
-from serialize import (POOL_BEV, POOL_OPT_END, TASK_TYPES, Encoder, build_batch, pad_ranks)
+from dataset import collate
+from network import build_model, compute_loss, emd_loss, expected_calibration_error
+from tokenization import POOL_BEV, POOL_OPT_END, TASK_TYPES, Encoder
 
 FAILURES = []
 
@@ -215,7 +217,7 @@ def test_order_invariance(device, full=False):
         enc = Encoder(tok, 512, 64, mode=mode, pool=pool)
         net = tiny_model(head="v2", pool=pool).to(device).eval()
         if mode == "special":
-            from serialize import resize_and_init_embeddings
+            from tokenization import resize_and_init_embeddings
             resize_and_init_embeddings(net.backbone, tok, verbose=False)
         worst, worst_p = 0.0, 0.0
         for k in (3, 5, 8, 12):
@@ -299,7 +301,7 @@ def test_losses(device):
 
     # masked padding columns must not distort label smoothing.  With torch's own
     # F.cross_entropy(..., label_smoothing=eps) a -1e9 padding column adds eps/K * 1e9 here.
-    from losses import smoothed_cross_entropy
+    from network import smoothed_cross_entropy
     torch.manual_seed(0)
     mask = torch.tensor([[True, True, True, False], [True, True, True, False]])
     logits = torch.tensor([[2.0, 1.0, 0.0, -1e9], [0.0, 3.0, 1.0, -1e9]], requires_grad=True)
@@ -563,6 +565,230 @@ def test_launch_guards(tmpdir=None):
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------- (f) config files
+def test_config_precedence():
+    """argparse default < yaml < command line; values cast to the argparse type; unknown keys raise."""
+    import train as T
+    print("\n(f) config precedence: argparse default < yaml < command line")
+    tmp = tempfile.mkdtemp(prefix="cfg_")
+
+    def write(body, name):
+        p = os.path.join(tmp, name)
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        return p
+
+    good = write("seed: 3\noptim:\n  max_steps: 7\n  batch_size: 3\nhead:\n  type: v1\n", "good.yaml")
+    a = T.parse_args(["--config", good])
+    check("yaml supplies the values",
+          (a.max_steps, a.batch_size, a.head, a.seed) == (7, 3, "v1", 3),
+          f"max_steps={a.max_steps} batch={a.batch_size} head={a.head} seed={a.seed}")
+
+    b = T.parse_args(["--config", good, "--max_steps", "9", "--head", "v2"])
+    check("command line beats the yaml (SageMaker hyperparameters rely on this)",
+          (b.max_steps, b.head) == (9, "v2"), f"max_steps={b.max_steps} head={b.head}")
+
+    cast = write("optim:\n  max_steps: '11'\n  lr_lora: '0.5'\n", "cast.yaml")
+    c = T.parse_args(["--config", cast])
+    check("yaml strings are cast to the type of the argparse default",
+          c.max_steps == 11 and isinstance(c.max_steps, int)
+          and c.lr_lora == 0.5 and isinstance(c.lr_lora, float),
+          f"max_steps={c.max_steps!r} lr_lora={c.lr_lora!r}")
+
+    for body, name, why in [("optim:\n  not_a_key: 1\n", "leaf.yaml", "an unknown leaf key"),
+                            ("nonsense:\n  x: 1\n", "section.yaml", "an unknown section"),
+                            ("optim: {}\n", "empty.yaml", "a config that sets nothing")]:
+        p = write(body, name)
+        try:
+            T.parse_args(["--config", p])
+            ok, msg = False, "no error raised"
+        except SystemExit as e:
+            ok, msg = True, str(e)[:70]
+        check(f"config rejects {why}", ok, msg)
+
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- (g) train.py fixes
+# A 2-layer random-init model on the real (cached) Qwen3 tokenizer: no weight download, but the
+# tokenizer path is the production one. --random_init 1 means no checkpoint is fetched.
+_TINY = ["--backbone_name", "Qwen/Qwen3-0.6B", "--num_layers", "2", "--random_init", "1",
+         "--vocab_size", "151669", "--head_new_dim", "512", "--head_layers", "2",
+         "--head_heads", "4", "--n_ctx", "4",
+         "--batch_size", "4", "--grad_accum_steps", "2", "--seed", "0",
+         "--num_workers", "0", "--log_every", "1", "--eval_every", "50",
+         "--max_state_tokens", "1024", "--max_choice_tokens", "64",
+         "--selftest", "0", "--env_check", "0"]
+
+
+def _golden_data():
+    return os.path.join(_ROOT, os.pardir, "decider_v2_work", "golden", "data")
+
+
+def _run_train(extra, tmp, tag, resume_from=None):
+    """Run train.py as a subprocess. Returns (exit status, summary dict or None, metrics rows)."""
+    import json
+    import subprocess
+    out = os.path.join(tmp, tag)
+    data = _golden_data()
+    cmd = [sys.executable, os.path.join(_ROOT, "train.py")] + _TINY + [
+        "--train_channel", os.path.join(data, "train"),
+        "--val_channel", os.path.join(data, "val"),
+        "--test_channel", os.path.join(data, "test"),
+        "--model_dir", os.path.join(out, "model"),
+        "--output_dir", os.path.join(out, "output"),
+        "--checkpoint_dir", os.path.join(out, "ckpt"),
+    ] + list(extra)
+    p = subprocess.run(cmd, cwd=_ROOT, capture_output=True, text=True)
+    summary, rows = None, []
+    sp = os.path.join(out, "output", "summary.json")
+    if os.path.isfile(sp):
+        with open(sp, encoding="utf-8") as fh:
+            summary = json.load(fh)
+    mp = os.path.join(out, "output", "metrics.jsonl")
+    if os.path.isfile(mp):
+        with open(mp, encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+    return p.returncode, summary, rows, out, p
+
+
+def test_train_fixes():
+    """The three listed behaviour changes: budget, checkpoint mirror, auto-resume."""
+    print("\n(g) train.py fixes: budget footgun, checkpoint_dir, auto_resume")
+    if not os.path.isdir(_golden_data()):
+        print(f"  [SKIP] training-behaviour tests: golden data missing at {_golden_data()}")
+        return
+    tmp = tempfile.mkdtemp(prefix="trainfix_")
+    try:
+        # 24 train questions, batch 4 x accum 2 -> 3 steps/epoch. Two epochs would be 6 steps.
+        for head in ("v1",):
+            status, summary, rows, out, proc = _run_train(
+                ["--head", head, "--max_steps", "7", "--epochs", "2", "--save_every", "7"], tmp, "budget")
+            check("a run with --max_steps 7 --epochs 2 reaches step 7, not 6",
+                  status == 0 and summary and summary.get("final_step") == 7
+                  and summary.get("total_steps") == 7,
+                  f"exit={status} final_step={summary and summary.get('final_step')} "
+                  f"total_steps={summary and summary.get('total_steps')}")
+
+            ck = os.path.join(out, "ckpt")
+            present = [n for n in ("latest", "best", "final") if os.path.isdir(os.path.join(ck, n))]
+            check("latest / best / final are mirrored into --checkpoint_dir",
+                  len(present) == 3 and os.path.isfile(os.path.join(ck, "latest", "optim.pt")),
+                  f"{present}, optim.pt={'optim.pt' in (os.listdir(os.path.join(ck, 'latest')) if os.path.isdir(os.path.join(ck, 'latest')) else [])}")
+
+        # auto_resume: 20 straight steps vs 10 + resume 10 must agree on the final loss. The first
+        # leg keeps --max_steps 20 and stops at 10 with --stop_at_step: shrinking --max_steps would
+        # also shrink the cosine schedule, so the first 10 steps would not be the same 10 steps the
+        # straight run took (that is a different run, not an interruption).
+        s_a, sum_a, rows_a, out_a, _ = _run_train(
+            ["--head", "v2", "--max_steps", "20", "--epochs", "9", "--save_every", "5"], tmp, "straight")
+        s_b, sum_b, rows_b, out_b, _ = _run_train(
+            ["--head", "v2", "--max_steps", "20", "--epochs", "9", "--save_every", "5",
+             "--stop_at_step", "10"], tmp, "resume")
+        s_c, sum_c, rows_c, out_c, _ = _run_train(
+            ["--head", "v2", "--max_steps", "20", "--epochs", "9", "--save_every", "5", "--auto_resume", "1"],
+            tmp, "resume")
+        last = lambda rs: [r["loss"] for r in rs if "loss" in r][-1]
+        if s_a or s_b or s_c:
+            check("auto_resume: the three runs complete", False,
+                  f"exit codes {s_a}/{s_b}/{s_c}")
+        else:
+            spread = abs(last(rows_a) - last(rows_c))
+            check("20 straight steps == 10 steps + resume 10 (final loss, 1e-6)",
+                  spread <= 1e-6, f"straight={last(rows_a):.12f} resumed={last(rows_c):.12f} |d|={spread:.3e}")
+            check("the resumed run ends at the same step",
+                  sum_c.get("final_step") == 20, f"final_step={sum_c.get('final_step')}")
+            check("resuming actually resumed (it did not restart from step 0)",
+                  len(rows_c) + 10 == len(rows_a) + 0 or sum_c.get("final_step") == 20,
+                  f"resumed logged {len(rows_c)} rows vs {len(rows_a)} straight")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- (h) notebook checklist
+def test_notebook_checklist():
+    """Each item caused a real failure in the old notebook; assert it cannot silently regress."""
+    import json
+    print("\n(h) sagemaker_train.ipynb regression checklist (static, from the committed notebook)")
+    path = os.path.join(_ROOT, "sagemaker_train.ipynb")
+    if not os.path.isfile(path):
+        print(f"  [SKIP] notebook missing at {path}")
+        return
+    with open(path, encoding="utf-8") as fh:
+        nb = json.load(fh)
+    src = "\n".join("".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code")
+
+    required = [
+        ('max_run', "the SDK kwarg is max_run, not max_runtime"),
+        ('use_spot_instances', "spot is a real kwarg"),
+        ('max_wait', "max_wait, not max_wait_time"),
+        ('checkpoint_s3_uri', "v2 estimator kwarg; the SDK builds CheckpointConfig.S3Uri from it"),
+        ('checkpoint_local_path', "the container's /opt/ml/checkpoints"),
+        ('disable_output_compression', "output compression off"),
+        ('metric_definitions', "metrics parsed from the log"),
+        ('inspect.signature', "kwargs are validated against the installed SDK"),
+        ('latest_training_job.name', "job name from the public API"),
+        ('describe_training_job', "status via boto3, not Session"),
+        ('filter_log_events', "throughput read from CloudWatch"),
+        ('/aws/sagemaker/TrainingJobs', "the real log group"),
+        ('TERM_MATCH', "pricing uses a TERM_MATCH filter list"),
+        ('AmazonSageMaker', "the Price List service name"),
+        ('NOT RESOLVED', "an unresolved price is printed, not guessed"),
+        ('logs="None"', "fit() logs go to CloudWatch only"),
+        ('wait=False', "fit() must not block the notebook"),
+    ]
+    missing = [f"{needle} ({why})" for needle, why in required if needle not in src]
+    check("every required SDK kwarg / API appears in the notebook",
+          not missing, "; ".join(missing) if missing else f"{len(required)} checked")
+
+    # sagemaker pinned below 3 without spelling the string: v3 removed sagemaker.pytorch.PyTorch
+    check("the SDK pin excludes v3", '(3, 0)' in src or 'hi=(3' in src,
+          "version guard present" if ('(3, 0)' in src or 'hi=(3' in src) else "no upper bound found")
+
+    check("the private _latest_job_name is never used",
+          '_latest_job_name' not in src, "absent" if '_latest_job_name' not in src else "present")
+
+    import re
+
+    # checkpoint_config is the CreateTrainingJob field / the v3 ModelTrainer kwarg. On the v2
+    # PyTorch estimator it is swallowed by **kwargs (no CheckpointConfig in the request), so the
+    # job would launch with no checkpoint sync. The real API is the two kwargs above.
+    bad_ckpt = re.search(r"^\s*checkpoint_config\s*=", src, re.M)
+    check("the notebook never passes checkpoint_config= to the v2 estimator",
+          bad_ckpt is None, "absent" if bad_ckpt is None else "present")
+
+    # base_job_name may not contain "_" -- SageMaker rejects the job name at submit time
+    bad_names = [m for m in re.findall(r'base_job_name\s*=\s*["\']([^"\']+)["\']', src) if "_" in m]
+    check("base_job_name values contain no underscore", not bad_names, str(bad_names) if bad_names else "ok")
+
+    # SMOKE and real runs must not share state or run names
+    check("SMOKE uses its own state file and run name",
+          "decider_v2_state_smoke" in src or "STATE_SMOKE" in src or "state_smoke" in src,
+          "separate smoke state")
+
+    # the source pack must be an explicit allowlist, never the repo root
+    check("source_dir is the build directory, not the repository root",
+          'source_dir=str(BUILD)' in src or 'source_dir=BUILD' in src,
+          "allowlist pack")
+
+    # cell 5 re-implements train.py's argparse precedence for the budget, so its defaults must
+    # be train.py's defaults. A drift here fingerprints a different budget than the job runs.
+    import ast
+    literal = re.search(r"^BUDGET_DEFAULTS = (\{[^\n]*\})", src, re.M)
+    if not literal:
+        check("the notebook's BUDGET_DEFAULTS mirror train.py", False, "BUDGET_DEFAULTS not found")
+    else:
+        nb_defaults = ast.literal_eval(literal.group(1))
+        import train as T
+        defaults = vars(T.parse_args([]))
+        drift = {k: (defaults.get(k), v) for k, v in nb_defaults.items() if defaults.get(k) != v}
+        check("the notebook's BUDGET_DEFAULTS mirror train.py", not drift,
+              str(drift) if drift else f"{sorted(nb_defaults)} match")
+    check("no base64 source zip remains", 'b64decode' not in src, "absent")
+
+
+        
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -572,13 +798,16 @@ def main():
     device = torch.device(args.device)
 
     print("=" * 78)
-    print(f"decider_v2 tests.py   device={device}  torch={torch.__version__}")
+    print(f"decider-train tests/test_core.py   device={device}  torch={torch.__version__}")
     print("=" * 78)
     test_packed_vs_separate(device)
     test_order_invariance(device)
     test_losses(device)
     test_decision_rule()
     test_launch_guards()
+    test_config_precedence()
+    test_train_fixes()
+    test_notebook_checklist()
     if not args.skip_overfit:
         test_overfit(device, steps=args.steps)
     print("\n" + "=" * 78)

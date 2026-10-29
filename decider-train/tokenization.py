@@ -18,7 +18,6 @@ option token may attend to another option.
 """
 
 import json
-import math
 
 import torch
 

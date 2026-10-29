@@ -5,16 +5,20 @@ Reports end-to-end samples/s (re-encoding every batch, as train.py does) and GPU
 """
 import argparse
 import os
+import sys
 import time
 from functools import partial
 
 import torch
 from torch.utils.data import DataLoader
 
-from data import DecisionDataset, collate, load_split_table
-from losses import compute_loss
-from model import _unwrap, build_model, count_params
-from serialize import Encoder
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from dataset import DecisionDataset, collate, load_split_table
+from network import _unwrap, build_model, compute_loss, count_params
+from tokenization import Encoder
 
 
 def main(argv=None):
