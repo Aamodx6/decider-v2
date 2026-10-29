@@ -272,6 +272,7 @@ class DecisionHeadV2(nn.Module):
         if use_null:
             self.null_opt = nn.Parameter(torch.zeros(d))
         self.blocks = nn.ModuleList([HeadBlockV2(d, h, dropout) for _ in range(num_layers)])
+        self.rel_scale = nn.Parameter(torch.tensor([0.05]))
         self.out = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, 1))
 
     def context_summary(self, prefix_h, prefix_pad):
@@ -301,6 +302,10 @@ class DecisionHeadV2(nn.Module):
                 x = x + blk.ff(blk.n2(x))
             else:
                 x = blk(x, ctx, opt_pad)
+        # Relative contrastive differential (choice-order invariant)
+        valid = (~opt_pad).unsqueeze(-1).float()
+        mean_opt = (x * valid).sum(dim=1, keepdim=True) / valid.sum(dim=1, keepdim=True).clamp(min=1.0)
+        x = x + self.rel_scale * (x - mean_opt)
         logits = self.out(x).squeeze(-1)
         return logits.masked_fill(opt_pad, -float("inf"))
 
