@@ -15,3 +15,4 @@ timestamp	commit	val_loss	val_acc	val_ece	order_invariance_dp	status	description
 2026-10-29T20:27:09.263808+00:00	45a62f3	1.3752	0.3438	0.3062	3.28e-07	keep	Test label smoothing 0.10 to explore calibration frontier
 2026-10-29T20:28:56.185300+00:00	dcad64c	1.3519	0.3438	0.2633	3.28e-07	keep	Test label smoothing 0.12 to probe beyond optimal calibration point
 2026-10-29T20:30:41.488175+00:00	8571dbc	1.3399	0.3750	0.2362	3.28e-07	keep	Test label smoothing 0.15 to find peak calibration
+2026-10-29T20:32:27.134164+00:00	56d7dae	1.3871	0.3438	0.2652	2.98e-07	discard	Test label smoothing 0.18 frontier (loss did not improve)
